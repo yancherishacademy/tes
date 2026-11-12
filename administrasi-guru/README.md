@@ -1,6 +1,10 @@
 # 📋 Administrasi Guru Mingguan — Rekap Otomatis
 
-Setiap email ber-subjek **"Administrasi Guru Mingguan"** yang masuk ke Gmail akan tercatat otomatis di Google Sheet, satu sheet per minggu (Senin–Minggu).
+Setiap email ber-subjek **"Administrasi Guru Mingguan"** atau **"Weekly Teacher Administration"** yang masuk ke Gmail akan otomatis **dibalas** dan **tercatat** di Google Sheet, satu sheet per minggu (Senin–Minggu).
+
+**Balasan otomatis:**
+> Thank you for the weekly report, God bless.  
+> Mr. Yan
 
 | No | Nama Guru | Email | Tanggal Diterima | Waktu Diterima | Isi Email |
 |----|-----------|-------|------------------|----------------|-----------|
@@ -26,12 +30,15 @@ Setelah Sheet dibuka ulang, ada menu **📋 Administrasi Guru** untuk *Ambil ema
 
 | Pengaturan | Bawaan | Fungsi |
 |---|---|---|
-| `SUBJEK` | `Administrasi Guru Mingguan` | Subjek yang dicari (balasan "Re: …" juga ikut) |
+| `SUBJEK` | `Administrasi Guru Mingguan`, `Weekly Teacher Administration` | Subjek yang dicari (balasan "Re: …" juga ikut) |
+| `BALAS_OTOMATIS` | `true` | Nyalakan/matikan balasan otomatis |
+| `TEKS_BALASAN` | *Thank you for the weekly report, God bless.* / *Mr. Yan* | Isi balasan (`\n` = baris baru) |
+| `BALAS_MAKS_HARI` | `7` | Email yang lebih lama dari ini tetap dicatat, tapi tidak dibalas |
 | `INTERVAL_MENIT` | `5` | Frekuensi cek Gmail (1, 5, 10, 15, 30) |
 | `ABAIKAN_EMAIL_SENDIRI` | `true` | Email yang Anda kirim sendiri tidak dicatat |
 | `ZONA_WAKTU` | `Asia/Jakarta` | Dasar tanggal, jam, dan pergantian minggu |
 
 ## Catatan
-- Setiap email hanya dicatat sekali (tidak ada data ganda), meski skrip berjalan berulang kali.
+- Setiap email hanya dicatat **dan dibalas** sekali (tidak ada data ganda), meski skrip berjalan berulang kali.
 - Status email di Gmail (dibaca/belum, label) tidak diubah sama sekali.
 - Mau mengambil ulang dari awal? Apps Script → ⚙️ Setelan Proyek → *Properti skrip* → hapus `AGM_WAKTU_TERAKHIR` dan `AGM_ID_TERAKHIR`, lalu jalankan `pasangOtomatis` lagi.

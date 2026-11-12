@@ -1,8 +1,9 @@
 /**
  * ADMINISTRASI GURU MINGGUAN — Rekap Otomatis Gmail ➜ Google Sheet
  * ------------------------------------------------------------------
- * Setiap email masuk ber-subjek "Administrasi Guru Mingguan" dicatat
- * otomatis ke Google Sheet ini, satu sheet untuk setiap minggu
+ * Setiap email masuk ber-subjek "Administrasi Guru Mingguan" atau
+ * "Weekly Teacher Administration" otomatis dibalas ucapan terima kasih
+ * dan dicatat ke Google Sheet ini, satu sheet untuk setiap minggu
  * (Senin–Minggu), misalnya "9-15 Nov 26", lalu "16-22 Nov 26", dst.
  *
  * Kolom: No | Nama Guru | Email | Tanggal Diterima | Waktu Diterima | Isi Email
@@ -12,10 +13,14 @@
 
 // ========================= PENGATURAN =========================
 var CONFIG = {
-  SUBJEK: 'Administrasi Guru Mingguan', // subjek yang dicari (huruf besar/kecil diabaikan)
+  // Subjek yang dicari (huruf besar/kecil diabaikan; balasan "Re: ..." ikut terbaca)
+  SUBJEK: ['Administrasi Guru Mingguan', 'Weekly Teacher Administration'],
   ZONA_WAKTU: 'Asia/Jakarta',
   INTERVAL_MENIT: 5,                    // seberapa sering Gmail dicek (1, 5, 10, 15, atau 30)
   ABAIKAN_EMAIL_SENDIRI: true,          // email yang Anda kirim sendiri tidak dicatat
+  BALAS_OTOMATIS: true,                 // kirim balasan terima kasih otomatis
+  BALAS_MAKS_HARI: 7,                   // hanya balas email yang diterima maks. 7 hari terakhir
+  TEKS_BALASAN: 'Thank you for the weekly report, God bless.\nMr. Yan',
   HEADER: ['No', 'Nama Guru', 'Email', 'Tanggal Diterima', 'Waktu Diterima', 'Isi Email'],
   LEBAR_KOLOM: [50, 200, 240, 130, 110, 520],
   WARNA_HEADER: '#1f3a5f'
@@ -75,10 +80,11 @@ function ambilEmailAdministrasi() {
     idTerakhir.forEach(function (id) { sudah[id] = true; });
 
     var saya = (Session.getEffectiveUser().getEmail() || '').toLowerCase();
-    var subjekKecil = CONFIG.SUBJEK.toLowerCase();
+    var daftarSubjek = [].concat(CONFIG.SUBJEK);
+    var subjekKecil = daftarSubjek.map(function (s) { return s.toLowerCase(); });
 
     // Cari di Gmail (mundur 1 jam sebagai pengaman, duplikat disaring di bawah).
-    var query = 'subject:"' + CONFIG.SUBJEK + '" after:' +
+    var query = '{' + daftarSubjek.map(function (s) { return 'subject:"' + s + '"'; }).join(' ') + '} after:' +
       Math.floor((waktuTerakhir - 3600 * 1000) / 1000);
 
     var pesanBaru = [];
@@ -90,7 +96,8 @@ function ambilEmailAdministrasi() {
           var t = msg.getDate().getTime();
           if (t < waktuTerakhir || sudah[msg.getId()]) return;
           if (msg.isInTrash() || msg.isDraft()) return;
-          if ((msg.getSubject() || '').toLowerCase().indexOf(subjekKecil) === -1) return;
+          var subjek = (msg.getSubject() || '').toLowerCase();
+          if (!subjekKecil.some(function (s) { return subjek.indexOf(s) !== -1; })) return;
           var pengirim = uraikanPengirim_(msg.getFrom());
           if (CONFIG.ABAIKAN_EMAIL_SENDIRI && pengirim.email === saya) return;
           pesanBaru.push({ msg: msg, waktu: t, pengirim: pengirim });
@@ -116,6 +123,8 @@ function ambilEmailAdministrasi() {
         Utilities.formatDate(p.msg.getDate(), CONFIG.ZONA_WAKTU, 'HH:mm:ss'),
         ringkasIsi_(p.msg)
       ]);
+
+      balasOtomatis_(p.msg);
 
       waktuTerakhir = Math.max(waktuTerakhir, p.waktu);
       idTerakhir.push(p.msg.getId());
@@ -258,6 +267,20 @@ function judulFileDrive_(url) {
     return DriveApp.getFileById(m[1]).getName();
   } catch (e) {
     try { return DriveApp.getFolderById(m[1]).getName(); } catch (e2) { return ''; }
+  }
+}
+
+// ========================= BALASAN OTOMATIS =========================
+/** Mengirim balasan terima kasih ke pengirim (sekali per email). */
+function balasOtomatis_(msg) {
+  if (!CONFIG.BALAS_OTOMATIS) return;
+  if (Date.now() - msg.getDate().getTime() > CONFIG.BALAS_MAKS_HARI * 86400000) return;
+  try {
+    msg.reply(CONFIG.TEKS_BALASAN, {
+      htmlBody: CONFIG.TEKS_BALASAN.split('\n').join('<br>')
+    });
+  } catch (e) {
+    console.error('Gagal membalas email ' + msg.getId() + ': ' + e);
   }
 }
 
