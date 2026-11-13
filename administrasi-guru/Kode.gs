@@ -72,6 +72,10 @@ function ambilEmailAdministrasi() {
   if (!lock.tryLock(30 * 1000)) return; // proses lain sedang berjalan
 
   try {
+    // Pastikan sheet minggu ini (lengkap dengan judul kolom) sudah ada,
+    // walaupun belum ada email yang masuk. Setiap Senin otomatis muncul sheet baru.
+    sheetMinggu_(SpreadsheetApp.getActiveSpreadsheet(), new Date());
+
     var props = PropertiesService.getScriptProperties();
     var waktuTerakhir = Number(props.getProperty(PROP_WAKTU_TERAKHIR)) ||
       (awalMinggu_(new Date()).getTime() - 1);
@@ -144,7 +148,15 @@ function sheetMinggu_(ss, tanggal) {
   var sheet = ss.getSheetByName(nama);
   if (sheet) return sheet;
 
-  sheet = ss.insertSheet(nama, 0); // minggu terbaru selalu di depan
+  // Pakai "Sheet1" bawaan bila masih kosong; selain itu buat sheet baru di paling depan.
+  var bawaan = ss.getSheetByName('Sheet1') || ss.getSheetByName('Lembar1');
+  if (bawaan && bawaan.getLastRow() === 0) {
+    sheet = bawaan.setName(nama);
+    ss.setActiveSheet(sheet);
+    ss.moveActiveSheet(1);
+  } else {
+    sheet = ss.insertSheet(nama, 0); // minggu terbaru selalu di depan
+  }
   var h = CONFIG.HEADER;
   sheet.getRange(1, 1, 1, h.length).setValues([h])
     .setFontWeight('bold')
@@ -161,10 +173,6 @@ function sheetMinggu_(ss, tanggal) {
   sheet.getRange(2, 1, maks - 1, 1).setHorizontalAlignment('center');
   sheet.getRange(2, 1, maks - 1, h.length).setVerticalAlignment('top');
   sheet.getRange(2, 6, maks - 1, 1).setWrap(true);
-
-  // Hapus "Sheet1" bawaan bila masih kosong.
-  var bawaan = ss.getSheetByName('Sheet1') || ss.getSheetByName('Lembar1');
-  if (bawaan && bawaan.getLastRow() === 0 && ss.getSheets().length > 1) ss.deleteSheet(bawaan);
 
   return sheet;
 }

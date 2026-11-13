@@ -11,7 +11,7 @@ Setiap email ber-subjek **"Administrasi Guru Mingguan"** atau **"Weekly Teacher 
 
 - **Isi Email** berisi teks email, lalu daftar **🔗 Link** (link Google Drive/Docs ikut ditulis judul filenya) dan **📎 File** (judul file lampiran).
 - Nama sheet mengikuti minggunya: `9-15 Nov 26` → `16-22 Nov 26` → `30 Nov-6 Des 26` → `28 Des 26-3 Jan 27`.
-- Sheet baru dibuat otomatis begitu email pertama masuk di minggu baru; minggu terbaru selalu ada di paling depan. Penomoran dimulai lagi dari 1 setiap minggu.
+- Sheet minggu berjalan (lengkap dengan judul kolom) langsung dibuat saat skrip pertama dijalankan — `Sheet1` kosong otomatis diganti namanya. Setiap Senin otomatis muncul sheet minggu baru di paling depan, meski belum ada email. Penomoran dimulai lagi dari 1 setiap minggu.
 
 ## Cara memasang (±3 menit, cukup sekali)
 
