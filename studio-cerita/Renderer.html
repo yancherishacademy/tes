@@ -1,0 +1,584 @@
+<script>
+/* =====================================================================
+ * MESIN ANIMASI — menggambar adegan, karakter, dialog, musik & rekaman
+ * ===================================================================== */
+(function (global) {
+  const W = 960, H = 540, GROUND = H * 0.8;
+  const SKY = { day: ['#86C5EE', '#DDF1FF'], morning: ['#F7C29F', '#FFF1DB'], dusk: ['#6B5A9C', '#F6A68A'], night: ['#0D1932', '#2A3F6B'] };
+  const SKINS = ['#F7D2B0', '#E3AE84', '#C68B59', '#8D5A3B', '#FBE0CB'];
+  const HAIR = ['#3B2A20', '#1E1E24', '#7A4B2A', '#C9813A', '#4A3426', '#2D2433'];
+  const TAU = Math.PI * 2;
+
+  function rng(seed) {
+    return function () {
+      seed |= 0; seed = seed + 0x6D2B79F5 | 0;
+      let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+  function hashStr(s) { let h = 2166136261; for (const ch of String(s)) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619); } return h >>> 0; }
+  function readTime(text) { const w = String(text || '').trim().split(/\s+/).filter(Boolean).length; return Math.min(14, Math.max(2.2, 1.2 + w * 0.42)); }
+  function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+  function shade(hex, amt) {
+    const n = parseInt(hex.slice(1), 16);
+    const f = c => clamp(Math.round(c + amt * 255), 0, 255);
+    return '#' + [f(n >> 16), f(n >> 8 & 255), f(n & 255)].map(x => x.toString(16).padStart(2, '0')).join('');
+  }
+  function rr(ctx, x, y, w, h, r) { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); }
+  function wrap(ctx, text, maxW) {
+    const words = String(text).split(/\s+/); const lines = []; let cur = '';
+    words.forEach(w => { const test = cur ? cur + ' ' + w : w; if (ctx.measureText(test).width > maxW && cur) { lines.push(cur); cur = w; } else cur = test; });
+    if (cur) lines.push(cur);
+    return lines;
+  }
+  function ellipse(ctx, x, y, rx, ry, fill) { ctx.beginPath(); ctx.ellipse(x, y, rx, ry, 0, 0, TAU); ctx.fillStyle = fill; ctx.fill(); }
+  function heart(ctx, x, y, s, fill) {
+    ctx.save(); ctx.translate(x, y); ctx.scale(s, s); ctx.beginPath();
+    ctx.moveTo(0, 4); ctx.bezierCurveTo(-10, -4, -6, -12, 0, -6); ctx.bezierCurveTo(6, -12, 10, -4, 0, 4);
+    ctx.fillStyle = fill; ctx.fill(); ctx.restore();
+  }
+
+  /* ----------------------------- LATAR ----------------------------- */
+  function drawSky(ctx, time, t) {
+    const g = ctx.createLinearGradient(0, 0, 0, GROUND);
+    g.addColorStop(0, SKY[time][0]); g.addColorStop(1, SKY[time][1]);
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    if (time === 'night') {
+      const r = rng(7);
+      for (let i = 0; i < 70; i++) { const a = 0.4 + 0.6 * Math.abs(Math.sin(t * 1.5 + i)); ctx.fillStyle = `rgba(255,255,240,${a})`; ctx.fillRect(r() * W, r() * GROUND * 0.7, 2, 2); }
+      ellipse(ctx, W * 0.8, 95, 34, 34, '#FFF6D5'); ellipse(ctx, W * 0.8 + 14, 87, 30, 30, SKY.night[0]);
+    } else {
+      const pos = { day: [W * 0.82, 90, '#FFE48A'], morning: [W * 0.15, 165, '#FFD27A'], dusk: [W * 0.78, GROUND - 60, '#FF9E6B'] }[time];
+      const glow = ctx.createRadialGradient(pos[0], pos[1], 10, pos[0], pos[1], 110);
+      glow.addColorStop(0, 'rgba(255,240,200,.8)'); glow.addColorStop(1, 'rgba(255,240,200,0)');
+      ctx.fillStyle = glow; ctx.fillRect(pos[0] - 110, pos[1] - 110, 220, 220);
+      ellipse(ctx, pos[0], pos[1], 38, 38, pos[2]);
+      for (let i = 0; i < 4; i++) {
+        const x = ((i * 290 + t * (8 + i * 2)) % (W + 240)) - 120, y = 60 + i * 38 + (i % 2) * 20;
+        ctx.fillStyle = time === 'dusk' ? 'rgba(255,220,220,.7)' : 'rgba(255,255,255,.85)';
+        [[0, 0, 34], [30, -12, 28], [58, 0, 30], [28, 8, 30]].forEach(c => { ctx.beginPath(); ctx.arc(x + c[0], y + c[1], c[2], 0, TAU); ctx.fill(); });
+      }
+    }
+  }
+  function hills(ctx, color, base, amp, seed, t) {
+    ctx.fillStyle = color; ctx.beginPath(); ctx.moveTo(0, H);
+    for (let x = 0; x <= W; x += 20) ctx.lineTo(x, base - amp * (0.6 + 0.4 * Math.sin(x / 140 + seed)) - amp * 0.3 * Math.sin(x / 60 + seed * 2));
+    ctx.lineTo(W, H); ctx.closePath(); ctx.fill();
+  }
+  function ground(ctx, top, bottom) {
+    const g = ctx.createLinearGradient(0, GROUND - 10, 0, H); g.addColorStop(0, top); g.addColorStop(1, bottom);
+    ctx.fillStyle = g; ctx.fillRect(0, GROUND - 6, W, H - GROUND + 6);
+  }
+  function tree(ctx, x, base, s, leaf, sway) {
+    ctx.fillStyle = '#7A5236'; ctx.fillRect(x - 7 * s, base - 70 * s, 14 * s, 70 * s);
+    const o = Math.sin(sway) * 3 * s;
+    [[0, -95, 42], [-28, -75, 32], [28, -75, 32], [0, -130, 32]].forEach(c => ellipse(ctx, x + c[0] * s + o, base + c[1] * s, c[2] * s, c[2] * s, leaf));
+  }
+  function palm(ctx, x, base, t) {
+    ctx.strokeStyle = '#8B6A43'; ctx.lineWidth = 12; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(x, base); ctx.quadraticCurveTo(x + 30, base - 100, x + 10, base - 190); ctx.stroke();
+    ctx.strokeStyle = '#3E8E5B'; ctx.lineWidth = 9;
+    for (let i = 0; i < 6; i++) { const a = i / 6 * TAU + Math.sin(t) * 0.05; ctx.beginPath(); ctx.moveTo(x + 10, base - 190); ctx.quadraticCurveTo(x + 10 + Math.cos(a) * 50, base - 220, x + 10 + Math.cos(a) * 85, base - 170 + Math.abs(Math.sin(a)) * 10); ctx.stroke(); }
+  }
+  function house(ctx, x, base, w, h, wall, roof, night) {
+    ctx.fillStyle = wall; ctx.fillRect(x, base - h, w, h);
+    ctx.fillStyle = roof; ctx.beginPath(); ctx.moveTo(x - 12, base - h); ctx.lineTo(x + w / 2, base - h - w * 0.45); ctx.lineTo(x + w + 12, base - h); ctx.fill();
+    ctx.fillStyle = '#7A5236'; ctx.fillRect(x + w * 0.4, base - h * 0.55, w * 0.2, h * 0.55);
+    ctx.fillStyle = night ? '#FFD86B' : '#BFE4F7'; ctx.fillRect(x + w * 0.1, base - h * 0.75, w * 0.2, h * 0.25); ctx.fillRect(x + w * 0.7, base - h * 0.75, w * 0.2, h * 0.25);
+  }
+  function flowers(ctx, r, n, y0, y1) {
+    for (let i = 0; i < n; i++) { const x = r() * W, y = y0 + r() * (y1 - y0); const c = ['#F28FB1', '#FFD166', '#FFFFFF', '#C3A6FF'][i % 4]; ctx.fillStyle = c; for (let k = 0; k < 5; k++) { ctx.beginPath(); ctx.arc(x + Math.cos(k * 1.26) * 4, y + Math.sin(k * 1.26) * 4, 3.4, 0, TAU); ctx.fill(); } ellipse(ctx, x, y, 2.5, 2.5, '#F4A261'); }
+  }
+
+  function drawBackground(ctx, scene, idx, t) {
+    const time = scene.setting === 'space' ? 'night' : scene.time;
+    const night = time === 'night';
+    const r = rng(idx * 97 + hashStr(scene.setting));
+    if (scene.setting === 'room') return drawRoom(ctx, time, t, r);
+    if (scene.setting === 'space') {
+      const g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, '#05060F'); g.addColorStop(1, '#1B1840'); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+      for (let i = 0; i < 160; i++) { ctx.fillStyle = `rgba(255,255,255,${0.3 + 0.7 * Math.abs(Math.sin(t + i * 3.1))})`; ctx.fillRect(r() * W, r() * H, 2, 2); }
+      ellipse(ctx, 200, 140, 60, 60, '#E9A178'); ctx.strokeStyle = 'rgba(255,230,200,.7)'; ctx.lineWidth = 6; ctx.beginPath(); ctx.ellipse(200, 140, 105, 22, -0.3, 0, TAU); ctx.stroke();
+      ellipse(ctx, 780, 90, 26, 26, '#7FB8E8');
+      ground(ctx, '#B9B4C7', '#8C879B');
+      for (let i = 0; i < 9; i++) ellipse(ctx, r() * W, GROUND + 15 + r() * 80, 20 + r() * 25, 6 + r() * 6, 'rgba(90,85,110,.35)');
+      return;
+    }
+    drawSky(ctx, time, t);
+    const s = scene.setting;
+    if (s === 'mountain') {
+      [[150, 260, '#7D8FB3'], [470, 200, '#6A7CA3'], [780, 250, '#8396BB']].forEach(m => {
+        ctx.fillStyle = m[2]; ctx.beginPath(); ctx.moveTo(m[0] - 260, GROUND); ctx.lineTo(m[0], m[1] - 40); ctx.lineTo(m[0] + 260, GROUND); ctx.fill();
+        ctx.fillStyle = '#FFFFFF'; ctx.beginPath(); ctx.moveTo(m[0] - 55, m[1] + 5); ctx.lineTo(m[0], m[1] - 40); ctx.lineTo(m[0] + 55, m[1] + 5); ctx.lineTo(m[0] + 20, m[1] - 5); ctx.lineTo(m[0], m[1] + 10); ctx.lineTo(m[0] - 20, m[1] - 5); ctx.fill();
+      });
+      hills(ctx, '#7DB46C', GROUND + 4, 30, 2, t); ground(ctx, '#86C06F', '#5E9A50');
+    } else if (s === 'beach') {
+      const sea = ctx.createLinearGradient(0, GROUND - 130, 0, GROUND); sea.addColorStop(0, '#3D8FC4'); sea.addColorStop(1, '#6EC3E0');
+      ctx.fillStyle = sea; ctx.fillRect(0, GROUND - 130, W, 130);
+      ctx.strokeStyle = 'rgba(255,255,255,.7)'; ctx.lineWidth = 3;
+      for (let row = 0; row < 4; row++) { ctx.beginPath(); for (let x = 0; x <= W; x += 10) ctx.lineTo(x, GROUND - 110 + row * 28 + Math.sin(x / 40 + t * 2 + row) * 4); ctx.stroke(); }
+      ground(ctx, '#F2D9A6', '#E2C084'); palm(ctx, 70, GROUND + 10, t); palm(ctx, W - 90, GROUND + 20, t + 1);
+    } else if (s === 'city') {
+      for (let i = 0; i < 12; i++) { const bw = 70 + r() * 40, bh = 120 + r() * 160, x = i * 85 - 20; ctx.fillStyle = night ? '#2D3557' : '#A9B6CC'; ctx.fillRect(x, GROUND - bh - 40, bw, bh + 40); }
+      for (let i = 0; i < 8; i++) {
+        const bw = 90 + r() * 30, bh = 110 + r() * 120, x = i * 125 - 10; ctx.fillStyle = night ? '#3E4874' : ['#E8B4A0', '#9FC5B8', '#E9D29A', '#B8A9D9'][i % 4]; ctx.fillRect(x, GROUND - bh, bw, bh);
+        for (let wy = GROUND - bh + 14; wy < GROUND - 24; wy += 28) for (let wx = x + 12; wx < x + bw - 16; wx += 24) { ctx.fillStyle = night ? (r() > 0.4 ? '#FFD86B' : '#1E2440') : 'rgba(255,255,255,.75)'; ctx.fillRect(wx, wy, 12, 14); }
+      }
+      ground(ctx, '#7D7F8C', '#5F616C'); ctx.fillStyle = '#F4F4F4'; for (let x = 0; x < W; x += 80) ctx.fillRect(x + ((t * 20) % 80) * 0, GROUND + 50, 40, 5);
+    } else if (s === 'school') {
+      hills(ctx, '#9CCB86', GROUND - 20, 30, 1, t);
+      const bx = W / 2 - 230; ctx.fillStyle = '#F3E3C3'; ctx.fillRect(bx, GROUND - 190, 460, 190);
+      ctx.fillStyle = '#C8553D'; ctx.beginPath(); ctx.moveTo(bx - 20, GROUND - 190); ctx.lineTo(W / 2, GROUND - 270); ctx.lineTo(bx + 480, GROUND - 190); ctx.fill();
+      for (let i = 0; i < 6; i++) { ctx.fillStyle = night ? '#FFD86B' : '#BFE4F7'; ctx.fillRect(bx + 25 + i * 72, GROUND - 160, 46, 40); }
+      ctx.fillStyle = '#7A5236'; ctx.fillRect(W / 2 - 28, GROUND - 90, 56, 90);
+      ctx.fillStyle = '#9A9A9A'; ctx.fillRect(110, GROUND - 260, 6, 260);
+      for (let k = 0; k < 2; k++) { ctx.fillStyle = k ? '#FFFFFF' : '#E63946'; ctx.beginPath(); for (let x = 0; x <= 80; x += 8) ctx.lineTo(116 + x, GROUND - 258 + k * 22 + Math.sin(x / 15 - t * 5) * 5); for (let x = 80; x >= 0; x -= 8) ctx.lineTo(116 + x, GROUND - 236 + k * 22 + Math.sin(x / 15 - t * 5) * 5); ctx.fill(); }
+      ground(ctx, '#8CC47A', '#64A057');
+    } else if (s === 'village') {
+      hills(ctx, '#8DBF7A', GROUND - 40, 40, 3, t);
+      house(ctx, 70, GROUND, 150, 100, '#EAD7B7', '#A0522D', night); house(ctx, W - 230, GROUND, 160, 110, '#F1E2C6', '#8B4513', night);
+      palm(ctx, W / 2 + 230, GROUND - 5, t);
+      ground(ctx, '#A6CF73', '#7DAA4E');
+      ctx.strokeStyle = 'rgba(70,120,40,.35)'; ctx.lineWidth = 2; for (let y = GROUND + 20; y < H; y += 18) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y + 6); ctx.stroke(); }
+    } else if (s === 'forest') {
+      hills(ctx, '#5E9C6A', GROUND - 60, 50, 4, t);
+      for (let i = 0; i < 10; i++) tree(ctx, 40 + i * 98 + r() * 30, GROUND - 25, 0.8 + r() * 0.3, '#3F7F55', t + i);
+      ground(ctx, '#6FAF62', '#4E8A47');
+      tree(ctx, 30, GROUND + 30, 1.4, '#2F6B45', t); tree(ctx, W - 30, GROUND + 35, 1.5, '#2F6B45', t + 2);
+      flowers(ctx, r, 18, GROUND + 15, H - 10);
+    } else if (s === 'park') {
+      hills(ctx, '#9ACD8A', GROUND - 30, 35, 5, t);
+      tree(ctx, 120, GROUND, 1.2, '#4E9A5E', t); tree(ctx, W - 130, GROUND, 1.1, '#5BAA68', t + 1);
+      ground(ctx, '#90CB7C', '#6AA95A');
+      ctx.fillStyle = '#E9D8B4'; ctx.beginPath(); ctx.moveTo(W / 2 - 40, GROUND); ctx.lineTo(W / 2 + 40, GROUND); ctx.lineTo(W / 2 + 160, H); ctx.lineTo(W / 2 - 160, H); ctx.fill();
+      ctx.fillStyle = '#8B5E3C'; ctx.fillRect(W - 300, GROUND - 40, 110, 10); ctx.fillRect(W - 300, GROUND - 22, 110, 8); ctx.fillRect(W - 292, GROUND - 30, 6, 30); ctx.fillRect(W - 204, GROUND - 30, 6, 30);
+      flowers(ctx, r, 30, GROUND + 10, H - 10);
+    } else {
+      hills(ctx, '#A6D58F', GROUND - 40, 40, 6, t); hills(ctx, '#8BC67A', GROUND - 5, 25, 9, t);
+      ground(ctx, '#92CC7D', '#6DAA5D'); flowers(ctx, r, 24, GROUND + 10, H - 10);
+    }
+    if (night) { ctx.fillStyle = 'rgba(10,20,55,.32)'; ctx.fillRect(0, 0, W, H); }
+    else if (time === 'dusk') { ctx.fillStyle = 'rgba(120,60,90,.12)'; ctx.fillRect(0, 0, W, H); }
+  }
+
+  function drawRoom(ctx, time, t, r) {
+    const g = ctx.createLinearGradient(0, 0, 0, GROUND); g.addColorStop(0, '#F6E7D3'); g.addColorStop(1, '#EED7BC'); ctx.fillStyle = g; ctx.fillRect(0, 0, W, GROUND);
+    ctx.save(); rr(ctx, 600, 70, 220, 170, 10); ctx.clip(); drawSky(ctx, time, t); ctx.restore();
+    ctx.strokeStyle = '#FFFFFF'; ctx.lineWidth = 10; rr(ctx, 600, 70, 220, 170, 10); ctx.stroke(); ctx.beginPath(); ctx.moveTo(710, 70); ctx.lineTo(710, 240); ctx.moveTo(600, 155); ctx.lineTo(820, 155); ctx.stroke();
+    ctx.fillStyle = '#D98E73'; ctx.fillRect(590, 60, 30, 200); ctx.fillRect(800, 60, 30, 200);
+    ctx.fillStyle = '#C9A27E'; ctx.fillRect(130, 90, 130, 100); ctx.fillStyle = '#9DD3C8'; ctx.fillRect(142, 102, 106, 76); ellipse(ctx, 195, 150, 22, 14, '#F2C14E');
+    ctx.fillStyle = '#E2B07E'; ctx.fillRect(0, GROUND - 6, W, H);
+    ctx.strokeStyle = 'rgba(120,80,50,.25)'; ctx.lineWidth = 2; for (let x = 0; x < W; x += 70) { ctx.beginPath(); ctx.moveTo(x, GROUND); ctx.lineTo(x - 40, H); ctx.stroke(); }
+    ellipse(ctx, W / 2, GROUND + 55, 300, 34, 'rgba(129,178,154,.55)');
+    ctx.fillStyle = '#6B4A35'; ctx.fillRect(60, GROUND - 120, 8, 120); ellipse(ctx, 64, GROUND - 130, 34, 22, time === 'night' ? '#FFE08A' : '#F5D6A8');
+    if (time === 'night') { ctx.fillStyle = 'rgba(20,20,60,.25)'; ctx.fillRect(0, 0, W, H); const lg = ctx.createRadialGradient(64, GROUND - 130, 5, 64, GROUND - 130, 220); lg.addColorStop(0, 'rgba(255,220,140,.45)'); lg.addColorStop(1, 'rgba(255,220,140,0)'); ctx.fillStyle = lg; ctx.fillRect(0, 0, 400, H); }
+  }
+
+  function drawWeather(ctx, weather, t) {
+    if (weather === 'rain') {
+      ctx.fillStyle = 'rgba(40,60,90,.18)'; ctx.fillRect(0, 0, W, H);
+      ctx.strokeStyle = 'rgba(200,220,255,.6)'; ctx.lineWidth = 2; ctx.beginPath();
+      for (let i = 0; i < 120; i++) { const x = (i * 73 + t * 60) % W, y = (i * 131 + t * 700) % H; ctx.moveTo(x, y); ctx.lineTo(x - 6, y + 18); }
+      ctx.stroke();
+    } else if (weather === 'snow') {
+      ctx.fillStyle = 'rgba(255,255,255,.9)';
+      for (let i = 0; i < 90; i++) { const x = (i * 97 + Math.sin(t + i) * 20 + t * 15) % W, y = (i * 53 + t * 50) % H; ctx.beginPath(); ctx.arc(x, y, 2 + (i % 3), 0, TAU); ctx.fill(); }
+    }
+  }
+
+  /* ----------------------------- KARAKTER ----------------------------- */
+  function drawCharacter(ctx, ch, o) {
+    // o: {x, y, s, face, look, emotion, action, talking, t}
+    const t = o.t, e = o.emotion, a = o.action;
+    let lift = 0, rot = 0, legSwing = 0, lean = 0;
+    if (a === 'walk') legSwing = Math.sin(t * 7) * 0.45;
+    if (a === 'run') { legSwing = Math.sin(t * 13) * 0.8; lean = 0.12; lift = Math.abs(Math.sin(t * 13)) * 6; }
+    if (a === 'jump') lift = Math.abs(Math.sin(t * 3.2)) * 70;
+    if (a === 'dance') { lift = Math.abs(Math.sin(t * 6)) * 14; rot = Math.sin(t * 4) * 0.18; legSwing = Math.sin(t * 6) * 0.3; }
+    if (o.talking) lift += Math.abs(Math.sin(t * 9)) * 3;
+    const breathe = 1 + Math.sin(t * 2.2) * 0.012;
+    const tremble = e === 'scared' ? Math.sin(t * 50) * 1.5 : 0;
+
+    ctx.save(); ctx.translate(o.x, o.y);
+    ellipse(ctx, 0, 0, 46 * o.s * (1 - lift / 200), 10 * o.s, 'rgba(0,0,0,.16)');
+    ctx.scale(o.s, o.s);
+
+    if (a === 'sleep') {
+      ctx.rotate(-Math.PI / 2); ctx.translate(-30, -40);
+    } else if (a === 'sit') {
+      ctx.fillStyle = '#B08968'; rr(ctx, -50, -38, 100, 38, 8); ctx.fill(); ctx.translate(0, -28);
+    }
+    ctx.translate(tremble, -lift); ctx.rotate(rot + lean * o.face); ctx.scale(o.face * breathe, 2 - breathe);
+
+    const body = ch.color || '#FF8A65', skin = SKINS[(ch.skin || 0) % SKINS.length], hair = HAIR[(ch.index || 0) % HAIR.length];
+    // kaki
+    ctx.strokeStyle = shade(body, -0.35); ctx.lineWidth = 13; ctx.lineCap = 'round';
+    [[-14, legSwing], [14, -legSwing]].forEach(l => {
+      ctx.beginPath(); ctx.moveTo(l[0], -50);
+      if (a === 'sit') ctx.lineTo(l[0] + 26, -6); else ctx.lineTo(l[0] + Math.sin(l[1]) * 34, -50 + Math.cos(l[1]) * 48);
+      ctx.stroke();
+    });
+    // badan
+    ctx.fillStyle = body; ctx.beginPath(); ctx.ellipse(0, -88, 38, 46, 0, 0, TAU); ctx.fill();
+    ellipse(ctx, 0, -78, 22, 26, shade(body, 0.12));
+    // lengan
+    ctx.strokeStyle = shade(body, -0.12); ctx.lineWidth = 11;
+    const arm = (side, hx, hy) => { ctx.beginPath(); ctx.moveTo(side * 30, -108); ctx.quadraticCurveTo(side * 44, (hy - 108) / 2 - 100, hx, hy); ctx.stroke(); ellipse(ctx, hx, hy, 7, 7, skin); };
+    let lh = [-46, -62], rh = [46, -62];
+    if (a === 'wave') rh = [52 + Math.sin(t * 9) * 14, -170];
+    if (a === 'dance') { lh = [-56, -160 + Math.sin(t * 6) * 20]; rh = [56, -160 - Math.sin(t * 6) * 20]; }
+    if (a === 'run') { lh = [-30 - Math.sin(t * 13) * 25, -80]; rh = [30 + Math.sin(t * 13) * 25, -80]; }
+    if (a === 'walk') { lh = [-44 - Math.sin(t * 7) * 10, -62]; rh = [44 + Math.sin(t * 7) * 10, -62]; }
+    if (e === 'scared' && a !== 'wave') { lh = [-22, -140]; rh = [22, -140]; }
+    if (e === 'love' && a === 'idle') { lh = [-20, -100]; rh = [20, -100]; }
+    if (e === 'angry' && a === 'idle') { lh = [-36, -78]; rh = [36, -78]; }
+    if (o.talking && a === 'idle' && e !== 'scared') rh = [50 + Math.sin(t * 4) * 6, -96 - Math.abs(Math.sin(t * 4)) * 14];
+    arm(-1, lh[0], lh[1]); arm(1, rh[0], rh[1]);
+    // kepala
+    const hy = -150;
+    ellipse(ctx, 0, hy, 42, 40, skin);
+    ctx.fillStyle = hair; ctx.beginPath(); ctx.arc(0, hy - 2, 43, Math.PI * 1.02, Math.PI * 1.98); ctx.quadraticCurveTo(18, hy - 20, -6, hy - 26); ctx.quadraticCurveTo(-28, hy - 14, -42, hy - 6); ctx.fill();
+    // mata
+    const blink = (t * 0.9 + (ch.index || 0) * 0.37) % 3.6 < 0.13;
+    const lx = clamp(o.look, -1, 1) * 3 * o.face;
+    [-15, 15].forEach(ex => {
+      if (a === 'sleep' || (e === 'happy' && !o.talking)) {
+        ctx.strokeStyle = '#2B2A33'; ctx.lineWidth = 3; ctx.beginPath();
+        if (a === 'sleep') ctx.arc(ex, hy - 2, 7, 0.15 * Math.PI, 0.85 * Math.PI); else ctx.arc(ex, hy + 2, 7, 1.15 * Math.PI, 1.85 * Math.PI);
+        ctx.stroke(); return;
+      }
+      if (e === 'love') { heart(ctx, ex, hy - 1, 1.1, '#E63946'); return; }
+      const big = e === 'surprised' ? 1.3 : 1;
+      ellipse(ctx, ex, hy - 2, 8 * big, blink ? 1.2 : 10 * big, '#FFFFFF');
+      if (!blink) { ellipse(ctx, ex + lx, hy, 4.5, 5, '#2B2A33'); ellipse(ctx, ex + lx + 1.5, hy - 2, 1.4, 1.4, '#FFFFFF'); }
+    });
+    // alis
+    ctx.strokeStyle = shade(hair, 0.05); ctx.lineWidth = 3.5;
+    if (e === 'angry') { ctx.beginPath(); ctx.moveTo(-24, hy - 18); ctx.lineTo(-8, hy - 12); ctx.moveTo(24, hy - 18); ctx.lineTo(8, hy - 12); ctx.stroke(); }
+    if (e === 'sad' || e === 'scared') { ctx.beginPath(); ctx.moveTo(-24, hy - 12); ctx.lineTo(-8, hy - 18); ctx.moveTo(24, hy - 12); ctx.lineTo(8, hy - 18); ctx.stroke(); }
+    if (e === 'surprised') { ctx.beginPath(); ctx.arc(-15, hy - 16, 8, 1.2 * Math.PI, 1.8 * Math.PI); ctx.moveTo(23, hy - 21); ctx.arc(15, hy - 16, 8, 1.2 * Math.PI, 1.8 * Math.PI); ctx.stroke(); }
+    // pipi
+    if (e === 'happy' || e === 'love' || e === 'neutral') { ellipse(ctx, -26, hy + 10, 7, 4.5, 'rgba(240,120,120,.35)'); ellipse(ctx, 26, hy + 10, 7, 4.5, 'rgba(240,120,120,.35)'); }
+    // mulut
+    const my = hy + 18;
+    ctx.strokeStyle = '#7A2E2E'; ctx.lineWidth = 3; ctx.fillStyle = '#7A2E2E';
+    if (o.talking) { ellipse(ctx, 0, my, 8, 2 + Math.abs(Math.sin(t * 15)) * 7, '#7A2E2E'); }
+    else if (a === 'sleep') { ellipse(ctx, 0, my, 4, 3, '#7A2E2E'); }
+    else if (e === 'happy' || e === 'love') { ctx.beginPath(); ctx.arc(0, my - 6, 11, 0.15 * Math.PI, 0.85 * Math.PI); ctx.fill(); }
+    else if (e === 'sad') { ctx.beginPath(); ctx.arc(0, my + 8, 9, 1.2 * Math.PI, 1.8 * Math.PI); ctx.stroke(); }
+    else if (e === 'angry') { ctx.beginPath(); ctx.moveTo(-9, my + 2); ctx.lineTo(-3, my - 2); ctx.lineTo(3, my + 2); ctx.lineTo(9, my - 2); ctx.stroke(); }
+    else if (e === 'surprised') { ellipse(ctx, 0, my + 2, 6, 8, '#7A2E2E'); }
+    else if (e === 'scared') { ctx.beginPath(); for (let x = -9; x <= 9; x += 3) ctx.lineTo(x, my + (x / 3 % 2 ? 2 : -2)); ctx.stroke(); }
+    else { ctx.beginPath(); ctx.arc(0, my - 4, 7, 0.2 * Math.PI, 0.8 * Math.PI); ctx.stroke(); }
+    // efek
+    if (e === 'sad') { const ty = (t * 40) % 40; ellipse(ctx, -18, hy + 6 + ty, 3, 5, 'rgba(110,180,240,.9)'); }
+    if (e === 'scared') ellipse(ctx, 34, hy - 20 + Math.sin(t * 6) * 2, 4, 7, 'rgba(110,180,240,.9)');
+    ctx.restore();
+
+    // efek di luar transformasi (agar teks tidak terbalik)
+    const topY = o.y - (a === 'sleep' ? 90 : 205 + lift) * o.s;
+    ctx.save(); ctx.textAlign = 'center';
+    if (a === 'sleep') { ctx.fillStyle = '#5B6EAE'; ctx.font = '800 26px Nunito, sans-serif'; for (let i = 0; i < 3; i++) { const p = (t * 0.6 + i / 3) % 1; ctx.globalAlpha = 1 - p; ctx.fillText('z', o.x + 40 + p * 40, topY - p * 60); } }
+    if (e === 'surprised') { ctx.fillStyle = '#E07A5F'; ctx.font = '900 42px Nunito, sans-serif'; ctx.fillText('!', o.x + 48 * o.s, topY + 10); }
+    if (e === 'love') { heart(ctx, o.x + 40 * o.s, topY - ((t * 30) % 40), 1.8, 'rgba(230,57,70,.85)'); }
+    if (e === 'angry') { ctx.strokeStyle = '#D62828'; ctx.lineWidth = 3; const cx = o.x + 36 * o.s, cy = topY + 20; ctx.beginPath(); ctx.moveTo(cx - 8, cy - 3); ctx.lineTo(cx + 8, cy - 3); ctx.moveTo(cx - 8, cy + 3); ctx.lineTo(cx + 8, cy + 3); ctx.moveTo(cx - 3, cy - 8); ctx.lineTo(cx - 3, cy + 8); ctx.moveTo(cx + 3, cy - 8); ctx.lineTo(cx + 3, cy + 8); ctx.stroke(); }
+    ctx.globalAlpha = 1;
+    // label nama
+    if (ch.name) {
+    ctx.font = '800 16px Nunito, sans-serif'; const nw = ctx.measureText(ch.name).width + 20;
+    ctx.fillStyle = 'rgba(255,255,255,.88)'; rr(ctx, o.x - nw / 2, o.y + 10, nw, 24, 12); ctx.fill();
+    ctx.fillStyle = '#2B2A33'; ctx.fillText(ch.name, o.x, o.y + 28);
+    }
+    ctx.restore();
+    return { headX: o.x, headY: o.y - (a === 'sleep' ? 70 : 195 + lift) * o.s };
+  }
+
+  /* ----------------------------- TEKS ----------------------------- */
+  function caption(ctx, text, who) {
+    ctx.save(); ctx.font = '600 24px Nunito, sans-serif';
+    const lines = wrap(ctx, (who ? who + ': ' : '') + text, W - 140).slice(0, 4);
+    const h = lines.length * 32 + 26, y = H - h - 18;
+    ctx.fillStyle = 'rgba(30,26,40,.72)'; rr(ctx, 40, y, W - 80, h, 18); ctx.fill();
+    ctx.fillStyle = '#FFFFFF'; ctx.textAlign = 'center';
+    lines.forEach((l, i) => ctx.fillText(l, W / 2, y + 36 + i * 32));
+    ctx.restore();
+  }
+  function bubble(ctx, text, hx, hy, progress) {
+    ctx.save(); ctx.font = '700 22px Nunito, sans-serif';
+    const lines = wrap(ctx, text, 330).slice(0, 5);
+    const bw = Math.max(...lines.map(l => ctx.measureText(l).width)) + 36, bh = lines.length * 28 + 22;
+    const pop = Math.min(1, progress * 6), sc = 0.7 + 0.3 * pop;
+    let bx = clamp(hx - bw / 2, 12, W - bw - 12), by = clamp(hy - bh - 26, 10, H - bh - 10);
+    ctx.globalAlpha = pop; ctx.translate(hx, by + bh); ctx.scale(sc, sc); ctx.translate(-hx, -(by + bh));
+    ctx.fillStyle = '#FFFFFF'; ctx.shadowColor = 'rgba(0,0,0,.18)'; ctx.shadowBlur = 12;
+    rr(ctx, bx, by, bw, bh, 18); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(clamp(hx - 12, bx + 16, bx + bw - 30), by + bh - 2); ctx.lineTo(clamp(hx, bx + 10, bx + bw - 10), by + bh + 20); ctx.lineTo(clamp(hx + 12, bx + 30, bx + bw - 16), by + bh - 2); ctx.fill();
+    ctx.shadowBlur = 0; ctx.fillStyle = '#2B2A33'; ctx.textAlign = 'center';
+    lines.forEach((l, i) => ctx.fillText(l, bx + bw / 2, by + 32 + i * 28));
+    ctx.restore();
+  }
+
+  /* ----------------------------- MUSIK ----------------------------- */
+  const PROG = {
+    calm: [[48, 64, 67, 72], [43, 62, 67, 71], [45, 64, 69, 72], [41, 60, 65, 69]],
+    happy: [[48, 64, 67, 76], [41, 65, 69, 72], [43, 62, 67, 74], [48, 64, 67, 72]],
+    sad: [[45, 60, 64, 69], [41, 60, 65, 69], [48, 64, 67, 72], [43, 62, 67, 71]],
+    scared: [[45, 60, 63, 69], [44, 59, 62, 68], [45, 60, 63, 69], [46, 61, 64, 70]],
+    angry: [[40, 55, 59, 64], [41, 56, 60, 65], [40, 55, 59, 64], [38, 53, 57, 62]],
+    love: [[41, 57, 64, 69], [43, 59, 62, 67], [48, 60, 64, 67], [45, 60, 64, 69]],
+    surprised: [[48, 64, 67, 72], [50, 66, 69, 74], [52, 67, 71, 76], [43, 62, 67, 71]]
+  };
+  class Music {
+    constructor(ac, out) { this.ac = ac; this.out = ac.createGain(); this.out.gain.value = 0; this.out.connect(out); this.mood = 'calm'; this.step = 0; this.timer = null; }
+    start() { if (this.timer) return; this.out.gain.setTargetAtTime(0.07, this.ac.currentTime, 0.4); this.tick(); this.timer = setInterval(() => this.tick(), 2400); }
+    stop() { clearInterval(this.timer); this.timer = null; this.out.gain.setTargetAtTime(0, this.ac.currentTime, 0.15); }
+    tick() {
+      const prog = PROG[this.mood] || PROG.calm, chord = prog[this.step++ % prog.length], now = this.ac.currentTime;
+      chord.forEach((m, i) => {
+        const osc = this.ac.createOscillator(), g = this.ac.createGain();
+        osc.type = i === 0 ? 'sine' : 'triangle'; osc.frequency.value = 440 * Math.pow(2, (m - 69) / 12);
+        g.gain.setValueAtTime(0, now); g.gain.linearRampToValueAtTime(i === 0 ? 0.5 : 0.22, now + 0.5); g.gain.linearRampToValueAtTime(0, now + 2.7);
+        osc.connect(g); g.connect(this.out); osc.start(now); osc.stop(now + 2.8);
+      });
+      const bell = this.ac.createOscillator(), bg = this.ac.createGain();
+      bell.type = 'sine'; bell.frequency.value = 440 * Math.pow(2, (chord[1 + this.step % 3] + 12 - 69) / 12);
+      bg.gain.setValueAtTime(0.18, now + 1.2); bg.gain.exponentialRampToValueAtTime(0.001, now + 2.3);
+      bell.connect(bg); bg.connect(this.out); bell.start(now + 1.2); bell.stop(now + 2.4);
+    }
+  }
+
+  /* ----------------------------- ANIMATOR ----------------------------- */
+  class Animator {
+    constructor(canvas, opts) {
+      this.c = canvas; this.ctx = canvas.getContext('2d'); this.opts = opts || {};
+      this.t = 0; this.playing = false; this.tts = true; this.musicOn = true; this.recording = false;
+      this.voices = {}; this.segIdx = -1; this.sources = []; this.last = 0;
+      this._frame = this.frame.bind(this);
+    }
+    load(story, meta) {
+      this.pause();
+      this.story = story; this.meta = meta || {};
+      this.chars = {}; (story.characters || []).forEach((c, i) => { this.chars[c.name] = Object.assign({ index: i }, c); });
+      this.buildTimeline(); this.t = 0; this.segIdx = -1; this.draw();
+    }
+    buildTimeline() {
+      const segs = [], sceneStart = [], sceneEnd = []; let t = 0;
+      const push = (o, d) => { segs.push(Object.assign({ start: t, end: t + d, dur: d }, o)); t += d; };
+      if (!this.opts.noTitle) push({ type: 'title', scene: 0 }, 3.5);
+      let line = 0;
+      this.story.scenes.forEach((sc, i) => {
+        sceneStart[i] = t;
+        push({ type: 'narration', scene: i, text: sc.narration }, sc.narration ? readTime(sc.narration) : 1.6);
+        sc.dialogues.forEach(d => push({ type: 'dialogue', scene: i, speaker: d.speaker, text: d.text, line: line++ }, readTime(d.text)));
+        sceneEnd[i] = t;
+      });
+      if (!this.opts.noTitle) push({ type: 'end', scene: Math.max(0, this.story.scenes.length - 1) }, 4);
+      this.segs = segs; this.sceneStart = sceneStart; this.sceneEnd = sceneEnd; this.total = t;
+    }
+    segAt(t) { for (let i = 0; i < this.segs.length; i++) if (t < this.segs[i].end) return i; return this.segs.length - 1; }
+
+    ensureAudio() {
+      if (!this.ac) {
+        const AC = global.AudioContext || global.webkitAudioContext; if (!AC) return;
+        this.ac = new AC(); this.master = this.ac.createGain(); this.master.connect(this.ac.destination);
+        this.recDest = this.ac.createMediaStreamDestination(); this.master.connect(this.recDest);
+        this.music = new Music(this.ac, this.master);
+      }
+      if (this.ac.state === 'suspended') this.ac.resume();
+    }
+    /** voices: [{character, mimeType, base64}] */
+    async setVoices(list) {
+      this.ensureAudio(); this.voices = {};
+      for (const v of list || []) {
+        try {
+          const bin = atob(v.base64), buf = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+          this.voices[v.character.toLowerCase()] = await this.ac.decodeAudioData(buf.buffer);
+        } catch (e) { console.warn('Suara gagal dibaca', v.character, e); }
+      }
+    }
+    voiceFor(name) {
+      const n = String(name || '').toLowerCase();
+      return this.voices[n] || this.voices[n.split(' ').pop()] || null;
+    }
+
+    play() {
+      if (!this.segs || !this.segs.length) return;
+      this.ensureAudio();
+      if (this.t >= this.total - 0.05) this.t = 0;
+      this.playing = true; this.segIdx = -1; this.last = performance.now();
+      if (this.musicOn && this.music) this.music.start();
+      cancelAnimationFrame(this.raf); this.raf = requestAnimationFrame(this._frame);
+      this.emit();
+    }
+    pause() {
+      this.playing = false; cancelAnimationFrame(this.raf);
+      this.stopSound(); if (this.music) this.music.stop(); this.emit();
+    }
+    toggle() { this.playing ? this.pause() : this.play(); }
+    seek(t) { this.t = clamp(t, 0, this.total || 0); this.segIdx = -1; this.stopSound(); this.draw(); this.emit(); }
+    seekScene(i) { this.seek((this.sceneStart[i] || 0) + 0.01); }
+    stopSound() {
+      this.sources.forEach(s => { try { s.stop(); } catch (e) { } }); this.sources = [];
+      if (global.speechSynthesis) speechSynthesis.cancel();
+    }
+    frame(now) {
+      const dt = Math.min(0.1, (now - this.last) / 1000); this.last = now;
+      if (this.playing) {
+        this.t += dt;
+        if (this.t >= this.total) {
+          if (this.opts.loop) { this.t = 0; this.segIdx = -1; }
+          else { this.t = this.total; this.draw(); this.pause(); if (this.onEnd) this.onEnd(); return; }
+        }
+        const i = this.segAt(this.t);
+        if (i !== this.segIdx) { this.segIdx = i; this.onSegment(this.segs[i]); }
+      }
+      this.draw(); this.emit();
+      if (this.playing) this.raf = requestAnimationFrame(this._frame);
+    }
+    emit() { if (this.onTick) this.onTick(this.t, this.total, this.playing); }
+    onSegment(seg) {
+      if (this.opts.silent) return;
+      this.stopSound();
+      const scene = this.story.scenes[seg.scene];
+      if (this.music && scene) this.music.mood = scene.mood || 'calm';
+      const into = this.t - seg.start;
+      if (seg.type === 'narration' && seg.text) this.speak(seg.text, null);
+      if (seg.type === 'title') this.speak(this.meta.title || '', null);
+      if (seg.type === 'dialogue') {
+        const buf = this.voiceFor(seg.speaker);
+        if (buf) this.playClip(buf, seg, into); else this.speak(seg.text, seg.speaker);
+      }
+    }
+    playClip(buf, seg, into) {
+      if (!this.ac) return;
+      const remain = seg.dur - into; if (remain < 0.3) return;
+      const long = buf.duration > seg.dur + 1;
+      const offset = long ? (seg.line * 2.7) % (buf.duration - seg.dur) : 0;
+      const len = Math.min(remain, buf.duration - offset);
+      const src = this.ac.createBufferSource(), g = this.ac.createGain(), now = this.ac.currentTime;
+      src.buffer = buf; g.gain.setValueAtTime(1, now); g.gain.setValueAtTime(1, now + Math.max(0, len - 0.25)); g.gain.linearRampToValueAtTime(0, now + len);
+      src.connect(g); g.connect(this.master); src.start(now, offset, len); this.sources.push(src);
+    }
+    speak(text, speaker) {
+      if (!this.tts || this.recording || !global.speechSynthesis || !text) return;
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = this.meta.lang || 'id-ID';
+      const ch = speaker && this.chars[speaker];
+      u.pitch = ch ? clamp(ch.pitch || 1, 0.1, 2) : 0.95; u.rate = ch ? 1.02 : 0.97;
+      const v = speechSynthesis.getVoices().find(x => x.lang && x.lang.replace('_', '-').toLowerCase().indexOf(u.lang.slice(0, 2).toLowerCase()) === 0);
+      if (v) u.voice = v;
+      speechSynthesis.speak(u);
+    }
+
+    /** Rekam animasi utuh menjadi video (canvas + suara karakter + musik). */
+    record(onProgress) {
+      return new Promise((resolve, reject) => {
+        this.ensureAudio();
+        const types = ['video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4'];
+        const mime = global.MediaRecorder && types.find(t => MediaRecorder.isTypeSupported(t));
+        if (!mime || !this.c.captureStream) return reject(new Error('Browser ini belum mendukung perekaman video. Coba Chrome atau Edge versi terbaru di komputer.'));
+        const stream = this.c.captureStream(30);
+        if (this.recDest) this.recDest.stream.getAudioTracks().forEach(tr => stream.addTrack(tr));
+        const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 1500000 });
+        const chunks = [];
+        rec.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+        rec.onstop = () => { this.recording = false; if (this._cancelled) { this._cancelled = false; this.onEnd = prevEnd; this.onTick = prevTick; return reject(new Error('Perekaman dibatalkan.')); } this.onEnd = prevEnd; this.onTick = prevTick; resolve({ blob: new Blob(chunks, { type: mime.split(';')[0] }), ext: mime.indexOf('mp4') >= 0 ? 'mp4' : 'webm' }); };
+        const prevEnd = this.onEnd, prevTick = this.onTick;
+        this.onEnd = () => setTimeout(() => rec.state !== 'inactive' && rec.stop(), 400);
+        this.onTick = (t, total, playing) => { if (prevTick) prevTick(t, total, playing); if (onProgress) onProgress(t / total); };
+        this.recording = true; this.recorder = rec;
+        this.seek(0); rec.start(1000); this.play();
+      });
+    }
+    cancelRecording() { if (this.recorder && this.recorder.state !== 'inactive') { this._cancelled = true; this.pause(); this.recorder.stop(); } }
+
+    draw() {
+      const ctx = this.ctx;
+      if (!this.segs || !this.segs.length) { ctx.fillStyle = '#1d1b26'; ctx.fillRect(0, 0, W, H); return; }
+      const seg = this.segs[this.segAt(this.t)], into = this.t - seg.start;
+      if (seg.type === 'title') return this.drawTitle(into);
+      if (seg.type === 'end') return this.drawEnd(into);
+      const scene = this.story.scenes[seg.scene], st = this.t - this.sceneStart[seg.scene];
+      drawBackground(ctx, scene, seg.scene, this.t);
+      this.drawCast(scene, seg, st, into);
+      if (scene.setting !== 'room') drawWeather(ctx, scene.weather, this.t);
+      // fade antar adegan
+      const fade = Math.min(1, st / 0.45, (this.sceneEnd[seg.scene] - this.t) / 0.35);
+      if (fade < 1) { ctx.fillStyle = `rgba(22,18,32,${1 - fade})`; ctx.fillRect(0, 0, W, H); }
+      if (this.meta.title) {
+        ctx.save(); ctx.font = '700 14px Nunito, sans-serif'; ctx.fillStyle = 'rgba(255,255,255,.85)'; ctx.shadowColor = 'rgba(0,0,0,.4)'; ctx.shadowBlur = 4;
+        ctx.fillText(this.meta.title + (this.meta.animator ? '  ·  ' + this.meta.animator : ''), 18, 26); ctx.restore();
+      }
+    }
+    drawCast(scene, seg, st, into) {
+      const ctx = this.ctx, list = scene.characters || [], n = list.length;
+      const speaker = seg.type === 'dialogue' ? seg.speaker : null;
+      const s = n >= 4 ? 0.82 : n === 3 ? 0.92 : 1;
+      const pos = list.map((c, i) => W * (i + 1) / (n + 1));
+      const speakerIdx = list.findIndex(c => c.name === speaker);
+      let head = null;
+      list.forEach((c, i) => {
+        const base = this.chars[c.name] || { name: c.name, color: '#FFB703', index: i };
+        let x = pos[i];
+        if (c.action === 'walk') x += Math.sin(st * 0.8 + i) * 40;
+        if (c.action === 'run') x += Math.sin(st * 1.6 + i) * 80;
+        const vel = c.action === 'walk' ? Math.cos(st * 0.8 + i) : c.action === 'run' ? Math.cos(st * 1.6 + i) : 0;
+        const target = speakerIdx >= 0 && speakerIdx !== i ? pos[speakerIdx] : W / 2;
+        const face = vel ? Math.sign(vel) : (target >= x ? 1 : -1);
+        const talking = c.name === speaker;
+        const h = drawCharacter(ctx, base, { x, y: GROUND + 35, s, face, look: (target - x) / 200, emotion: c.emotion, action: c.action, talking, t: this.t + i * 0.7 });
+        if (talking) head = h;
+      });
+      if (seg.type === 'narration' && seg.text) caption(ctx, seg.text);
+      if (seg.type === 'dialogue') {
+        if (head) bubble(ctx, seg.text, head.headX, head.headY, into);
+        else caption(ctx, seg.text, seg.speaker);
+      }
+    }
+    drawTitle(into) {
+      const ctx = this.ctx, sc = this.story.scenes[0];
+      if (sc) drawBackground(ctx, sc, 0, this.t); else { ctx.fillStyle = '#2B2A33'; ctx.fillRect(0, 0, W, H); }
+      const a = Math.min(1, into / 0.8);
+      ctx.fillStyle = 'rgba(28,22,40,.62)'; ctx.fillRect(0, 0, W, H);
+      ctx.save(); ctx.textAlign = 'center'; ctx.globalAlpha = a; ctx.fillStyle = '#FFFFFF';
+      ctx.font = '800 18px Nunito, sans-serif'; ctx.fillStyle = '#F4C095';
+      ctx.fillText(((this.meta.seriesTitle || '') + (this.meta.episodeLabel ? '  ·  ' + this.meta.episodeLabel : '')).toUpperCase(), W / 2, H / 2 - 70);
+      ctx.fillStyle = '#FFFFFF'; ctx.font = '800 54px Nunito, sans-serif';
+      wrap(ctx, this.meta.title || 'Cerita Tanpa Judul', W - 160).slice(0, 2).forEach((l, i) => ctx.fillText(l, W / 2, H / 2 + i * 60 - (8 - 20 * (1 - a))));
+      ctx.font = '600 22px Nunito, sans-serif'; ctx.fillStyle = 'rgba(255,255,255,.85)';
+      if (this.meta.animator) ctx.fillText('Karya ' + this.meta.animator, W / 2, H / 2 + 100);
+      ctx.restore();
+    }
+    drawEnd(into) {
+      const ctx = this.ctx, a = Math.min(1, into / 0.8);
+      const g = ctx.createLinearGradient(0, 0, W, H); g.addColorStop(0, '#2B2340'); g.addColorStop(1, '#5A3A4E');
+      ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+      for (let i = 0; i < 40; i++) { ctx.fillStyle = `rgba(255,230,200,${0.3 * Math.abs(Math.sin(this.t + i))})`; ctx.beginPath(); ctx.arc((i * 211) % W, (i * 97) % H, 2, 0, TAU); ctx.fill(); }
+      ctx.save(); ctx.globalAlpha = a; ctx.textAlign = 'center'; ctx.fillStyle = '#FFFFFF';
+      ctx.font = '800 58px Nunito, sans-serif'; ctx.fillText(this.meta.hasNext ? 'Bersambung…' : 'Tamat', W / 2, H / 2 - 20);
+      ctx.font = '600 22px Nunito, sans-serif'; ctx.fillStyle = 'rgba(255,255,255,.85)';
+      if (this.meta.animator) ctx.fillText('Animasi oleh ' + this.meta.animator, W / 2, H / 2 + 34);
+      ctx.font = '600 16px Nunito, sans-serif'; ctx.fillStyle = '#F4C095'; ctx.fillText('Dibuat dengan Studio Cerita', W / 2, H / 2 + 74);
+      ctx.restore();
+    }
+  }
+
+  /** Sampul statis untuk kartu galeri. */
+  function drawCover(canvas, seed, title) {
+    const ctx = canvas.getContext('2d'), sx = canvas.width / W, r = rng(hashStr(seed));
+    const settings = ['meadow', 'forest', 'beach', 'mountain', 'city', 'school', 'village', 'park', 'space', 'room'];
+    const times = ['day', 'morning', 'dusk', 'night'];
+    const scene = { setting: settings[Math.floor(r() * settings.length)], time: times[Math.floor(r() * 4)], weather: 'clear' };
+    ctx.save(); ctx.scale(sx, canvas.height / H);
+    drawBackground(ctx, scene, 1, 3);
+    const emos = ['happy', 'love', 'surprised', 'neutral'];
+    [0, 1].forEach(i => drawCharacter(ctx, { name: '', color: ['#FF8A65', '#4FC3F7', '#AED581', '#BA68C8', '#FFD54F'][Math.floor(r() * 5)], skin: Math.floor(r() * 5), index: i },
+      { x: W * (i ? 0.62 : 0.38), y: GROUND + 35, s: 1.15, face: i ? -1 : 1, look: i ? -1 : 1, emotion: emos[Math.floor(r() * 4)], action: i ? 'wave' : 'idle', talking: false, t: 1.3 + i }));
+    ctx.restore();
+  }
+
+  global.StudioRenderer = { Animator, drawCover, readTime, W, H };
+})(window);
+</script>

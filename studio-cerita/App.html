@@ -1,0 +1,365 @@
+<script>
+/* =====================================================================
+ * APLIKASI — masuk, galeri, studio, editor, pemutar & unduhan
+ * ===================================================================== */
+const { Animator, drawCover } = window.StudioRenderer;
+const $ = (s, el = document) => el.querySelector(s);
+const $$ = (s, el = document) => [...el.querySelectorAll(s)];
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+  set(k, v) { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch (e) { } }
+};
+
+const S = { token: store.get('sc_token'), user: null, ai: false, series: null, episode: null, editor: null, from: 'gallery', voiceCache: {}, previewStory: null, previewText: '' };
+let previewAnim, playerAnim, loginAnim;
+
+/* ----------------------------- utilitas ----------------------------- */
+function api(fn, ...args) {
+  return new Promise((resolve, reject) => {
+    google.script.run
+      .withSuccessHandler(resolve)
+      .withFailureHandler(err => {
+        const msg = String((err && err.message) || err).replace(/^(Exception|Error|ScriptError):\s*/i, '');
+        if (msg.indexOf('SESSION_EXPIRED') >= 0) { endSession(); toast('Sesi sudah berakhir. Silakan masuk kembali, ya.'); }
+        reject(new Error(msg));
+      })[fn](...args);
+  });
+}
+function busy(msg) { $('#busy-text').textContent = msg || 'Sebentar, ya…'; $('#busy').classList.toggle('hidden', msg === false); }
+let toastTimer;
+function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 3600); }
+async function run(msg, fn) { busy(msg); try { return await fn(); } catch (e) { toast(e.message); throw e; } finally { busy(false); } }
+const quiet = p => p.catch(() => null);
+function fmt(t) { t = Math.max(0, t || 0); return Math.floor(t / 60) + ':' + String(Math.floor(t % 60)).padStart(2, '0'); }
+function slug(s) { return String(s || 'animasi').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'animasi'; }
+function download(blob, name) { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 4000); }
+function blobToBase64(blob) { return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1]); r.onerror = rej; r.readAsDataURL(blob); }); }
+
+function show(view) {
+  [previewAnim, playerAnim].forEach(a => a && !a.recording && a.pause());
+  $$('#app .view').forEach(v => v.classList.toggle('hidden', v.id !== 'view-' + view));
+  $$('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.go === view || (view === 'series' && b.dataset.go === 'studio')));
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+/* ----------------------------- masuk ----------------------------- */
+function startLoginDemo() {
+  loginAnim = new Animator($('#login-canvas'), { loop: true, silent: true, noTitle: true });
+  loginAnim.load({
+    characters: [{ name: 'Nara', color: '#FF8A65', skin: 0, pitch: 1.2 }, { name: 'Bima', color: '#4FC3F7', skin: 2, pitch: 0.8 }],
+    scenes: [
+      { setting: 'park', time: 'morning', weather: 'clear', mood: 'happy', narration: '', characters: [{ name: 'Nara', emotion: 'happy', action: 'wave' }, { name: 'Bima', emotion: 'happy', action: 'idle' }], dialogues: [{ speaker: 'Nara', text: 'Ayo tulis cerita kita!' }, { speaker: 'Bima', text: 'Lalu kita lihat ia bergerak!' }] },
+      { setting: 'beach', time: 'dusk', weather: 'clear', mood: 'love', narration: '', characters: [{ name: 'Nara', emotion: 'love', action: 'dance' }, { name: 'Bima', emotion: 'happy', action: 'jump' }], dialogues: [{ speaker: 'Bima', text: 'Setiap kisah itu berharga.' }] }
+    ]
+  }, {});
+  loginAnim.play();
+}
+
+$$('.tab').forEach(tab => tab.addEventListener('click', () => {
+  $$('.tab').forEach(t => t.classList.toggle('active', t === tab));
+  $('#form-login').classList.toggle('hidden', tab.dataset.tab !== 'login');
+  $('#form-register').classList.toggle('hidden', tab.dataset.tab !== 'register');
+}));
+
+$('#form-login').addEventListener('submit', async e => {
+  e.preventDefault(); const f = e.target;
+  const res = await quiet(run('Membuka pintu studio…', () => api('login', f.username.value, f.password.value)));
+  if (res) enterApp(res);
+});
+$('#form-register').addEventListener('submit', async e => {
+  e.preventDefault(); const f = e.target;
+  const res = await quiet(run('Menyiapkan studiomu…', () => api('register', f.username.value, f.password.value, f.displayName.value)));
+  if (res) { enterApp(res); toast('Selamat datang, ' + res.user.displayName + '. Senang kamu di sini.'); }
+});
+
+function enterApp(res) {
+  S.token = res.token; S.user = res.user; store.set('sc_token', res.token);
+  $('#user-name').textContent = res.user.displayName;
+  $('#view-login').classList.add('hidden'); $('#app').classList.remove('hidden');
+  if (loginAnim) loginAnim.pause();
+  api('isAIEnabled').then(v => { S.ai = !!v; $('#ai-wrap').classList.toggle('hidden', !S.ai); }).catch(() => { });
+  openGallery();
+}
+function endSession() {
+  store.set('sc_token', null); S.token = null; S.user = null;
+  [previewAnim, playerAnim].forEach(a => a && a.pause());
+  $('#app').classList.add('hidden'); $('#view-login').classList.remove('hidden');
+  if (loginAnim) loginAnim.play();
+}
+$('#btn-logout').addEventListener('click', () => { api('logout', S.token).catch(() => { }); endSession(); });
+$$('[data-go]').forEach(b => b.addEventListener('click', () => b.dataset.go === 'gallery' ? openGallery() : openStudio()));
+
+/* ----------------------------- galeri ----------------------------- */
+function seriesCard(s, mine) {
+  const card = document.createElement('article'); card.className = 'card series-card';
+  card.innerHTML = `<canvas class="thumb" width="480" height="270"></canvas>
+    <div class="body">
+      <h3>${esc(s.title)}</h3>
+      <div class="muted">Animator: <b>${esc(s.animator)}</b> · ${s.episodes.length} episode</div>
+      ${s.description ? `<p class="muted">${esc(s.description)}</p>` : ''}
+      <div class="chips">${s.episodes.map(ep => `<button class="chip" data-ep="${esc(ep.id)}">Ep ${ep.number}: ${esc(ep.title)}</button>`).join('')}</div>
+      ${mine ? '<div class="row" style="margin-top:auto;padding-top:.6rem"><button class="btn sm" data-manage>Kelola</button></div>' : ''}
+    </div>`;
+  drawCover($('canvas', card), s.id, s.title);
+  $$('[data-ep]', card).forEach(b => b.addEventListener('click', () => openPlayer(b.dataset.ep, mine ? 'series' : 'gallery')));
+  if (mine) $('[data-manage]', card).addEventListener('click', () => openSeries(s.id));
+  return card;
+}
+async function openGallery() {
+  show('gallery');
+  const list = $('#gallery-list'); list.innerHTML = '<div class="empty">Memuat karya…</div>';
+  try {
+    const data = await api('listGallery', S.token);
+    list.innerHTML = data.length ? '' : '<div class="empty">Galeri masih menunggu cerita pertamanya. Mungkin itu ceritamu? Buka <b>Studio Saya</b> untuk mulai.</div>';
+    data.forEach(s => list.appendChild(seriesCard(s, false)));
+  } catch (e) { list.innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+}
+
+/* ----------------------------- studio ----------------------------- */
+async function openStudio() {
+  show('studio');
+  const list = $('#studio-list'); list.innerHTML = '<div class="empty">Memuat…</div>';
+  try {
+    const data = await api('listMySeries', S.token);
+    list.innerHTML = data.length ? '' : '<div class="empty">Belum ada animasi. Tekan <b>+ Animasi Baru</b> — cerita kecil pun layak dihidupkan.</div>';
+    data.forEach(s => list.appendChild(seriesCard(s, true)));
+  } catch (e) { list.innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+}
+$('#btn-new-series').addEventListener('click', () => openSeries(null));
+
+async function openSeries(id) {
+  const f = $('#form-series');
+  S.series = { id, title: '', description: '', episodes: [] };
+  f.title.value = ''; f.description.value = '';
+  $('#episode-list').innerHTML = ''; $('#voice-list').innerHTML = '';
+  $('#btn-delete-series').classList.toggle('hidden', !id);
+  setSeriesExtras(!!id);
+  show('series');
+  if (!id) { f.title.focus(); return; }
+  const mine = await quiet(run('Membuka animasi…', () => api('listMySeries', S.token)));
+  const s = mine && mine.find(x => x.id === id); if (!s) return;
+  S.series = s; f.title.value = s.title; f.description.value = s.description || '';
+  renderEpisodes(); loadVoices();
+}
+function setSeriesExtras(on) { ['#form-voice', '#btn-new-episode'].forEach(sel => $(sel).disabled = !on); $$('#form-voice input, #form-voice button').forEach(el => el.disabled = !on); }
+
+$('#form-series').addEventListener('submit', async e => {
+  e.preventDefault(); const f = e.target;
+  const res = await quiet(run('Menyimpan…', () => api('saveSeries', S.token, { id: S.series.id, title: f.title.value, description: f.description.value })));
+  if (!res) return;
+  const isNew = !S.series.id; S.series.id = res.id; S.series.title = f.title.value;
+  $('#btn-delete-series').classList.remove('hidden'); setSeriesExtras(true);
+  toast(isNew ? 'Animasi dibuat. Sekarang tulis episode pertamanya.' : 'Tersimpan.');
+  if (isNew) { renderEpisodes(); loadVoices(); }
+});
+$('#btn-delete-series').addEventListener('click', async () => {
+  if (!confirm(`Hapus "${S.series.title}" beserta semua episode dan suaranya? Ini tidak bisa dibatalkan.`)) return;
+  if (await quiet(run('Menghapus…', () => api('deleteSeries', S.token, S.series.id)))) { toast('Animasi dihapus.'); openStudio(); }
+});
+
+function renderEpisodes() {
+  const ul = $('#episode-list'), eps = S.series.episodes || [];
+  ul.innerHTML = eps.length ? '' : '<li class="muted">Belum ada episode.</li>';
+  eps.forEach(ep => {
+    const li = document.createElement('li');
+    li.innerHTML = `<span class="title">Ep ${ep.number} · ${esc(ep.title)}</span>
+      <span class="actions"><button class="btn sm" data-a="watch">▶ Tonton</button><button class="btn sm" data-a="edit">Ubah</button><button class="btn sm danger ghost" data-a="del">Hapus</button></span>`;
+    $('[data-a=watch]', li).onclick = () => openPlayer(ep.id, 'series');
+    $('[data-a=edit]', li).onclick = () => openEditor(ep.id);
+    $('[data-a=del]', li).onclick = async () => {
+      if (!confirm(`Hapus episode "${ep.title}"?`)) return;
+      if (await quiet(run('Menghapus…', () => api('deleteEpisode', S.token, ep.id)))) { S.series.episodes = eps.filter(x => x.id !== ep.id); renderEpisodes(); }
+    };
+    ul.appendChild(li);
+  });
+}
+$('#btn-new-episode').addEventListener('click', () => openEditor(null));
+
+/* ----------------------------- suara karakter ----------------------------- */
+async function loadVoices() {
+  const ul = $('#voice-list');
+  const voices = await quiet(api('listVoices', S.token, S.series.id)) || [];
+  S.series.voices = voices;
+  ul.innerHTML = voices.length ? '' : '<li class="muted">Belum ada suara. Tanpa rekaman, tokoh berbicara dengan suara bawaan perangkat.</li>';
+  voices.forEach(v => {
+    const li = document.createElement('li');
+    li.innerHTML = `<span class="title">🎙 ${esc(v.character)} <span class="muted">— ${esc(v.fileName)}</span></span>
+      <span class="actions"><button class="btn sm" data-a="play">Dengar</button><button class="btn sm danger ghost" data-a="del">Hapus</button></span>`;
+    $('[data-a=play]', li).onclick = async () => {
+      const d = await quiet(run('Memuat suara…', () => voiceData(v.id))); if (!d) return;
+      new Audio('data:' + d.mimeType + ';base64,' + d.base64).play();
+    };
+    $('[data-a=del]', li).onclick = async () => {
+      if (!confirm(`Hapus suara ${v.character}?`)) return;
+      if (await quiet(run('Menghapus…', () => api('deleteVoice', S.token, v.id)))) { delete S.voiceCache[v.id]; loadVoices(); }
+    };
+    ul.appendChild(li);
+  });
+}
+$('#form-voice').addEventListener('submit', async e => {
+  e.preventDefault(); const f = e.target, file = f.file.files[0];
+  if (!file) return;
+  if (file.size > 10 * 1024 * 1024) return toast('Ukuran audio maksimal 10 MB.');
+  const res = await quiet(run('Mengunggah suara ' + f.character.value + '…', async () =>
+    api('uploadVoice', S.token, { seriesId: S.series.id, character: f.character.value, fileName: file.name, mimeType: file.type || 'audio/mpeg', base64: await blobToBase64(file) })));
+  if (res) { toast('Suara ' + res.character + ' siap dipakai.'); f.reset(); loadVoices(); }
+});
+async function voiceData(id) {
+  if (!S.voiceCache[id]) S.voiceCache[id] = await api('getVoiceData', S.token, id);
+  return S.voiceCache[id];
+}
+async function voicesFor(list) { return (await Promise.all((list || []).map(v => voiceData(v.id).catch(() => null)))).filter(Boolean); }
+
+/* ----------------------------- kontrol pemutar ----------------------------- */
+function mountControls(box, anim) {
+  box.innerHTML = `<button class="btn primary icon" data-c="play">▶</button>
+    <input type="range" min="0" max="1000" value="0" data-c="seek" aria-label="Posisi">
+    <span class="time" data-c="time">0:00 / 0:00</span>
+    <label class="check"><input type="checkbox" data-c="tts" checked> Suara narator</label>
+    <label class="check"><input type="checkbox" data-c="music" checked> Musik</label>`;
+  const play = $('[data-c=play]', box), seek = $('[data-c=seek]', box), time = $('[data-c=time]', box);
+  let dragging = false;
+  play.onclick = () => anim.toggle();
+  seek.oninput = () => { dragging = true; anim.seek(seek.value / 1000 * anim.total); };
+  seek.onchange = () => { dragging = false; };
+  $('[data-c=tts]', box).onchange = e => { anim.tts = e.target.checked; if (!anim.tts && window.speechSynthesis) speechSynthesis.cancel(); };
+  $('[data-c=music]', box).onchange = e => { anim.musicOn = e.target.checked; if (anim.music) anim.musicOn && anim.playing ? anim.music.start() : anim.music.stop(); };
+  anim.onTick = (t, total, playing) => {
+    play.textContent = playing ? '❚❚' : '▶';
+    if (!dragging) seek.value = total ? t / total * 1000 : 0;
+    time.textContent = fmt(t) + ' / ' + fmt(total);
+  };
+  anim.emit();
+  return { setDisabled(on) { $$('button,input', box).forEach(el => el.disabled = on); } };
+}
+
+/* ----------------------------- editor ----------------------------- */
+async function openEditor(episodeId) {
+  const f = $('#form-episode');
+  S.editor = { id: episodeId, seriesId: S.series.id };
+  S.previewStory = null; S.previewText = '';
+  f.title.value = ''; f.narration.value = '';
+  $('#editor-heading').textContent = episodeId ? 'Ubah Episode' : 'Episode Baru';
+  $('#scene-list').innerHTML = '<div class="muted">Tekan <b>▶ Pratinjau</b> untuk melihat ceritamu bergerak.</div>';
+  if (!previewAnim) { previewAnim = new Animator($('#preview-canvas')); mountControls($('#preview-controls'), previewAnim); }
+  previewAnim.load({ characters: [], scenes: [] }, {});
+  show('editor');
+  if (episodeId) {
+    const ep = await quiet(run('Membuka episode…', () => api('getEpisode', S.token, episodeId)));
+    if (!ep) return;
+    f.title.value = ep.title; f.narration.value = ep.narration;
+    S.previewStory = ep.story; S.previewText = ep.narration;
+    await loadPreview(ep.story, false);
+  }
+}
+$('#btn-editor-back').addEventListener('click', () => openSeries(S.series.id));
+
+async function loadPreview(story, autoplay) {
+  const f = $('#form-episode');
+  const num = S.editor.id ? ((S.series.episodes || []).find(e => e.id === S.editor.id) || {}).number : (S.series.episodes || []).length + 1;
+  previewAnim.load(story, { title: f.title.value || 'Tanpa Judul', seriesTitle: S.series.title, episodeLabel: 'Episode ' + num, animator: S.user.displayName });
+  previewAnim.setVoices(await voicesFor(S.series.voices));
+  $('#scene-list').innerHTML = story.scenes.map((sc, i) => `<div class="scene-item" data-i="${i}"><b>Adegan ${i + 1}</b> · ${esc(sc.setting)} · ${esc(sc.time)} · ${sc.characters.map(c => esc(c.name)).join(', ') || '—'}
+    <div class="muted">${esc(sc.narration || (sc.dialogues[0] ? sc.dialogues[0].speaker + ': ' + sc.dialogues[0].text : ''))}</div></div>`).join('') || '<div class="muted">Belum ada adegan.</div>';
+  $$('.scene-item').forEach(el => el.onclick = () => { previewAnim.seekScene(+el.dataset.i); previewAnim.play(); });
+  $('#character-suggest').innerHTML = story.characters.map(c => `<option value="${esc(c.name)}">`).join('');
+  if (autoplay) previewAnim.play();
+}
+
+$('#btn-preview').addEventListener('click', async () => {
+  const f = $('#form-episode');
+  if (f.narration.value.trim().length < 10) return toast('Tulis ceritanya sedikit lebih panjang, ya.');
+  const story = await quiet(run('Mengubah cerita menjadi adegan…', () => api('previewScenes', S.token, f.narration.value, S.ai && f.useAI.checked)));
+  if (!story) return;
+  if (!story.scenes.length) return toast('Belum ada adegan yang terbaca. Coba tambahkan kalimat atau dialog.');
+  S.previewStory = story; S.previewText = f.narration.value.trim();
+  await loadPreview(story, true);
+});
+
+$('#form-episode').addEventListener('submit', async e => {
+  e.preventDefault(); const f = e.target;
+  const reuse = S.previewStory && S.previewText === f.narration.value.trim();
+  const res = await quiet(run('Menyimpan & menayangkan…', () => api('saveEpisode', S.token, {
+    id: S.editor.id, seriesId: S.editor.seriesId, title: f.title.value, narration: f.narration.value,
+    useAI: S.ai && f.useAI.checked, story: reuse ? S.previewStory : null
+  })));
+  if (!res) return;
+  toast('Episode tayang di Galeri. Terima kasih sudah berbagi ceritamu.');
+  const mine = await quiet(api('listMySeries', S.token));
+  const s = mine && mine.find(x => x.id === S.series.id); if (s) { s.voices = S.series.voices; S.series = s; }
+  openPlayer(res.id, 'series');
+});
+
+/* ----------------------------- pemutar ----------------------------- */
+let playerControls;
+async function openPlayer(episodeId, from) {
+  S.from = from || S.from;
+  $('#btn-player-back').textContent = S.from === 'series' ? '← Kelola Animasi' : '← Galeri';
+  if (!playerAnim) { playerAnim = new Animator($('#player-canvas')); playerControls = mountControls($('#player-controls'), playerAnim); }
+  const ep = await quiet(run('Menyiapkan tayangan…', async () => {
+    const ep = await api('getEpisode', S.token, episodeId);
+    ep.voiceData = await voicesFor(ep.voices);
+    return ep;
+  }));
+  if (!ep) return;
+  S.episode = ep; show('player');
+  $('#player-series').textContent = ep.seriesTitle + ' · Episode ' + ep.number;
+  $('#player-title').textContent = ep.title;
+  $('#player-animator').textContent = ep.animator;
+  $('#download-status').textContent = '';
+  const idx = ep.episodes.findIndex(x => x.id === ep.id);
+  playerAnim.load(ep.story, { title: ep.title, seriesTitle: ep.seriesTitle, episodeLabel: 'Episode ' + ep.number, animator: ep.animator, hasNext: idx < ep.episodes.length - 1 });
+  await playerAnim.setVoices(ep.voiceData);
+  const next = ep.episodes[idx + 1];
+  playerAnim.onEnd = next ? () => toast('Episode berikutnya: ' + next.title) : null;
+
+  $('#player-episodes').innerHTML = ep.episodes.map(x => `<button class="chip ${x.id === ep.id ? 'active' : ''}" data-ep="${esc(x.id)}">Ep ${x.number}: ${esc(x.title)}</button>`).join('');
+  $$('#player-episodes [data-ep]').forEach(b => b.onclick = () => openPlayer(b.dataset.ep));
+  const own = $('#player-owner-actions'); own.innerHTML = '';
+  if (ep.isOwner) {
+    const b = document.createElement('button'); b.className = 'btn sm'; b.textContent = 'Ubah episode';
+    b.onclick = async () => { if (!S.series || S.series.id !== ep.seriesId) await openSeries(ep.seriesId); openEditor(ep.id); };
+    own.appendChild(b);
+  }
+}
+$('#btn-player-back').addEventListener('click', () => S.from === 'series' && S.series ? openSeries(S.series.id) : openGallery());
+
+$('#btn-download-json').addEventListener('click', () => {
+  const ep = S.episode; if (!ep) return;
+  const data = { judul: ep.title, seri: ep.seriesTitle, episode: ep.number, animator: ep.animator, narasi: ep.narration, naskah: ep.story };
+  download(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }), slug(ep.seriesTitle + '-ep' + ep.number + '-' + ep.title) + '.json');
+});
+
+$('#btn-download').addEventListener('click', async () => {
+  const ep = S.episode, status = $('#download-status'), btn = $('#btn-download');
+  if (!ep) return;
+  if (playerAnim.recording) { playerAnim.cancelRecording(); return; }
+  const hasTTS = !Object.keys(playerAnim.voices).length || ep.story.characters.some(c => !playerAnim.voiceFor(c.name));
+  if (hasTTS && !confirm('Video direkam sambil diputar (± ' + fmt(playerAnim.total) + ').\n\nYang ikut terekam: gambar, teks, musik, dan suara karakter yang diunggah. Suara narator bawaan perangkat tidak ikut terekam.\n\nBiarkan tab ini tetap terbuka selama perekaman. Lanjutkan?')) return;
+  btn.textContent = '■ Batalkan'; playerControls.setDisabled(true);
+  try {
+    const { blob, ext } = await playerAnim.record(p => { status.textContent = 'Merekam… ' + Math.round(p * 100) + '%'; });
+    if (blob.size < 1000) throw new Error('Perekaman dibatalkan.');
+    const name = slug(ep.seriesTitle + '-ep' + ep.number + '-' + ep.title) + '.' + ext;
+    download(blob, name);
+    status.innerHTML = 'Video siap ✓ ';
+    const drive = document.createElement('button'); drive.className = 'btn sm'; drive.textContent = 'Tidak terunduh? Simpan ke Drive';
+    drive.onclick = async () => {
+      const res = await quiet(run('Menyimpan video ke Drive…', async () => api('saveVideo', S.token, { fileName: name, mimeType: blob.type, base64: await blobToBase64(blob) })));
+      if (res) { status.innerHTML = `Tersimpan ✓ <a href="${esc(res.url)}" target="_blank" rel="noopener">Unduh dari Drive</a>`; }
+    };
+    status.appendChild(drive);
+  } catch (e) { status.textContent = e.message; }
+  finally { btn.textContent = '⬇ Unduh Video'; playerControls.setDisabled(false); }
+});
+
+/* ----------------------------- mulai ----------------------------- */
+(async function init() {
+  startLoginDemo();
+  if (window.speechSynthesis) speechSynthesis.getVoices();
+  if (!S.token) return;
+  try { const user = await api('me', S.token); enterApp({ token: S.token, user }); }
+  catch (e) { store.set('sc_token', null); }
+})();
+</script>

@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <?!= include('Styles'); ?>
+</head>
+<body>
+  <!-- ============ HALAMAN MASUK ============ -->
+  <section id="view-login" class="view login-view">
+    <div class="login-art" aria-hidden="true">
+      <canvas id="login-canvas" width="960" height="540"></canvas>
+    </div>
+    <div class="card login-card">
+      <div class="brand"><span class="logo">✦</span> Studio Cerita</div>
+      <p class="lead">Setiap cerita berharga — karena kamu berharga. Tulis kisahmu, dan biarkan ia hidup bergerak.</p>
+      <div class="tabs" role="tablist">
+        <button class="tab active" data-tab="login">Masuk</button>
+        <button class="tab" data-tab="register">Daftar</button>
+      </div>
+      <form id="form-login" class="stack">
+        <label>Username<input name="username" autocomplete="username" required></label>
+        <label>Kata sandi<input name="password" type="password" autocomplete="current-password" required></label>
+        <button class="btn primary" type="submit">Masuk</button>
+      </form>
+      <form id="form-register" class="stack hidden">
+        <label>Nama animator (tampil di karya)<input name="displayName" maxlength="60" required></label>
+        <label>Username<input name="username" autocomplete="username" pattern="[a-z0-9_.]{3,20}" title="3–20 huruf kecil, angka, titik, atau garis bawah" required></label>
+        <label>Kata sandi<input name="password" type="password" minlength="6" autocomplete="new-password" required></label>
+        <button class="btn primary" type="submit">Buat akun</button>
+      </form>
+    </div>
+  </section>
+
+  <!-- ============ APLIKASI ============ -->
+  <div id="app" class="hidden">
+    <header class="topbar">
+      <div class="brand small"><span class="logo">✦</span> Studio Cerita</div>
+      <nav>
+        <button class="nav-btn" data-go="gallery">Galeri</button>
+        <button class="nav-btn" data-go="studio">Studio Saya</button>
+      </nav>
+      <div class="user">
+        <span id="user-name"></span>
+        <button class="btn ghost sm" id="btn-logout">Keluar</button>
+      </div>
+    </header>
+
+    <main>
+      <!-- Galeri -->
+      <section id="view-gallery" class="view">
+        <div class="hero">
+          <h1>Galeri Animasi</h1>
+          <p>Karya-karya yang lahir dari cerita. Pilih satu episode dan nikmati.</p>
+        </div>
+        <div id="gallery-list" class="grid"></div>
+      </section>
+
+      <!-- Studio -->
+      <section id="view-studio" class="view">
+        <div class="hero row-between">
+          <div>
+            <h1>Studio Saya</h1>
+            <p>Ruang tenang untuk menulis dan menghidupkan ceritamu.</p>
+          </div>
+          <button class="btn primary" id="btn-new-series">+ Animasi Baru</button>
+        </div>
+        <div id="studio-list" class="grid"></div>
+      </section>
+
+      <!-- Detail seri -->
+      <section id="view-series" class="view">
+        <button class="btn ghost sm back" data-go="studio">← Studio</button>
+        <div class="split">
+          <div class="card">
+            <h2>Info Animasi</h2>
+            <form id="form-series" class="stack">
+              <label>Nama animasi<input name="title" maxlength="100" required></label>
+              <label>Sinopsis singkat<textarea name="description" rows="3" maxlength="600"></textarea></label>
+              <div class="row">
+                <button class="btn primary" type="submit">Simpan</button>
+                <button class="btn danger ghost" type="button" id="btn-delete-series">Hapus animasi</button>
+              </div>
+            </form>
+            <hr>
+            <h2>Suara Karakter</h2>
+            <p class="muted">Unggah rekaman sebagai referensi suara tokoh. Saat tokoh berbicara, suaranya akan diputar dan ikut terekam di video.</p>
+            <form id="form-voice" class="stack">
+              <label>Nama karakter<input name="character" list="character-suggest" maxlength="60" required placeholder="mis. Kancil"></label>
+              <datalist id="character-suggest"></datalist>
+              <label>File audio (maks 10 MB)<input name="file" type="file" accept="audio/*" required></label>
+              <button class="btn" type="submit">Unggah suara</button>
+            </form>
+            <ul id="voice-list" class="list"></ul>
+          </div>
+          <div class="card">
+            <div class="row-between">
+              <h2>Episode</h2>
+              <button class="btn primary sm" id="btn-new-episode">+ Episode Baru</button>
+            </div>
+            <ul id="episode-list" class="list"></ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- Editor -->
+      <section id="view-editor" class="view">
+        <button class="btn ghost sm back" id="btn-editor-back">← Kembali</button>
+        <div class="split wide">
+          <div class="card">
+            <h2 id="editor-heading">Episode Baru</h2>
+            <form id="form-episode" class="stack">
+              <label>Judul episode<input name="title" maxlength="120" required></label>
+              <label>Ceritamu
+                <textarea name="narration" rows="16" maxlength="20000" required placeholder="Pada suatu pagi di hutan, Kancil berjalan dengan riang.
+
+&quot;Halo, Kura-kura!&quot; seru Kancil sambil melambai.
+&quot;Mau ikut ke sungai?&quot; tanya Kura-kura sambil tersenyum."></textarea>
+              </label>
+              <details class="tips">
+                <summary>Tips menulis agar animasinya hidup</summary>
+                <ul>
+                  <li>Pisahkan adegan dengan <b>baris kosong</b>.</li>
+                  <li>Dialog pakai tanda kutip: <code>"Halo!" kata Budi.</code> atau format naskah <code>Budi: Halo!</code></li>
+                  <li>Sebut tempat (hutan, pantai, kota, sekolah, rumah, taman, gunung, desa, angkasa) dan waktu (pagi, sore, malam).</li>
+                  <li>Perasaan (senang, sedih, takut, marah, kaget, sayang) dan gerak (berjalan, berlari, melompat, menari, melambai, tidur, duduk) akan tampak di animasi.</li>
+                </ul>
+              </details>
+              <label class="check hidden" id="ai-wrap"><input type="checkbox" name="useAI" checked> Bantu olah cerita dengan AI</label>
+              <div class="row">
+                <button class="btn" type="button" id="btn-preview">▶ Pratinjau</button>
+                <button class="btn primary" type="submit">Simpan &amp; Tayangkan</button>
+              </div>
+            </form>
+          </div>
+          <div class="card">
+            <h2>Pratinjau</h2>
+            <div class="stage-wrap"><canvas id="preview-canvas" width="960" height="540"></canvas></div>
+            <div id="preview-controls" class="controls"></div>
+            <div id="scene-list" class="scene-list"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Pemutar -->
+      <section id="view-player" class="view">
+        <button class="btn ghost sm back" id="btn-player-back">← Galeri</button>
+        <div class="player">
+          <div class="player-head">
+            <div>
+              <div class="eyebrow" id="player-series"></div>
+              <h1 id="player-title"></h1>
+              <div class="muted">Animator: <b id="player-animator"></b></div>
+            </div>
+            <div class="row" id="player-owner-actions"></div>
+          </div>
+          <div class="stage-wrap"><canvas id="player-canvas" width="960" height="540"></canvas></div>
+          <div id="player-controls" class="controls"></div>
+          <div class="row wrap">
+            <button class="btn primary" id="btn-download">⬇ Unduh Video</button>
+            <button class="btn" id="btn-download-json">⬇ Unduh Naskah</button>
+            <span id="download-status" class="muted"></span>
+          </div>
+          <div class="episodes-strip" id="player-episodes"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="busy" class="busy hidden"><div class="spinner"></div><div id="busy-text">Sebentar, ya…</div></div>
+  <div id="toast" class="toast"></div>
+
+  <?!= include('Renderer'); ?>
+  <?!= include('App'); ?>
+</body>
+</html>
