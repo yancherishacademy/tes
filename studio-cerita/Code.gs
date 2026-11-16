@@ -13,6 +13,7 @@
 const APP_NAME = 'Studio Cerita';
 const SESSION_SECONDS = 6 * 60 * 60;            // batas maksimum CacheService (6 jam)
 const MAX_AUDIO_BYTES = 10 * 1024 * 1024;       // 10 MB per file suara
+const MAX_PHOTO_BYTES = 5 * 1024 * 1024;        // 5 MB per foto (sudah diperkecil di browser)
 const MAX_VIDEO_BYTES = 45 * 1024 * 1024;       // 45 MB per video yang disimpan ke Drive
 const MAX_NARRATION = 20000;                     // karakter per episode
 const CELL_LIMIT = 45000;                        // batas aman isi sel Spreadsheet
@@ -21,7 +22,8 @@ const SHEETS = {
   Users:    ['username', 'salt', 'hash', 'displayName', 'createdAt'],
   Series:   ['id', 'title', 'description', 'owner', 'createdAt', 'updatedAt'],
   Episodes: ['id', 'seriesId', 'number', 'title', 'narration', 'scenes', 'owner', 'createdAt', 'updatedAt'],
-  Voices:   ['id', 'seriesId', 'owner', 'character', 'fileId', 'mimeType', 'fileName', 'createdAt']
+  Voices:   ['id', 'seriesId', 'owner', 'character', 'fileId', 'mimeType', 'fileName', 'createdAt'],
+  Photos:   ['id', 'seriesId', 'owner', 'kind', 'name', 'fileId', 'mimeType', 'fileName', 'createdAt']
 };
 
 /* ============================== WEB APP ============================== */
@@ -239,6 +241,8 @@ function deleteSeries(token, seriesId) {
     ownedSeries_(seriesId, owner);
     rows_('Episodes').filter(function (e) { return e.seriesId === seriesId; }).forEach(function (e) { trashScenes_(e.scenes); });
     rows_('Voices').filter(function (v) { return v.seriesId === seriesId; }).forEach(function (v) { trashFile_(v.fileId); });
+    rows_('Photos').filter(function (v) { return v.seriesId === seriesId; }).forEach(function (v) { trashFile_(v.fileId); });
+    deleteRows_('Photos', function (v) { return v.seriesId === seriesId; });
     deleteRows_('Episodes', function (e) { return e.seriesId === seriesId; });
     deleteRows_('Voices', function (v) { return v.seriesId === seriesId; });
     deleteRows_('Series', function (s) { return s.id === seriesId; });
@@ -304,7 +308,7 @@ function getEpisode(token, episodeId) {
     id: e.id, seriesId: e.seriesId, number: Number(e.number), title: e.title,
     narration: e.narration, story: JSON.parse(unpackScenes_(e.scenes) || '{"characters":[],"scenes":[]}'),
     seriesTitle: s.title || '', animator: names[e.owner] || e.owner, isOwner: e.owner === viewer,
-    episodes: siblings, voices: voicesOf_(e.seriesId)
+    episodes: siblings, voices: voicesOf_(e.seriesId), photos: photosOf_(e.seriesId)
   };
 }
 
@@ -387,6 +391,63 @@ function deleteVoice(token, voiceId) {
     if (!v) throw new Error('Suara tidak ditemukan.');
     trashFile_(v.fileId);
     deleteRows_('Voices', function (x) { return x.id === voiceId; });
+    return true;
+  });
+}
+
+/* ============================== FOTO REFERENSI ============================== */
+/* kind 'background' : latar adegan. name = kata tempat (mis. "hutan") atau kosong = semua adegan.
+ * kind 'character'  : wajah tokoh. name = nama tokoh di cerita. */
+
+function photosOf_(seriesId) {
+  return rows_('Photos').filter(function (p) { return p.seriesId === seriesId; })
+    .map(function (p) { return { id: p.id, kind: p.kind, name: p.name, fileName: p.fileName, mimeType: p.mimeType }; });
+}
+
+function listPhotos(token, seriesId) {
+  auth_(token);
+  return photosOf_(seriesId);
+}
+
+function uploadPhoto(token, data) {
+  const owner = auth_(token);
+  ownedSeries_(data.seriesId, owner);
+  const kind = data.kind === 'character' ? 'character' : 'background';
+  const name = clean_(data.name, 60);
+  const mimeType = clean_(data.mimeType, 80) || 'image/jpeg';
+  if (kind === 'character' && !name) throw new Error('Tulis nama tokoh untuk foto ini.');
+  if (mimeType.indexOf('image/') !== 0) throw new Error('Mohon unggah file gambar (jpg, png, webp).');
+  const bytes = Utilities.base64Decode(String(data.base64 || ''));
+  if (!bytes.length) throw new Error('Foto kosong.');
+  if (bytes.length > MAX_PHOTO_BYTES) throw new Error('Ukuran foto maksimal 5 MB.');
+  const fileName = clean_(data.fileName, 120) || 'foto.jpg';
+  const file = folder_().createFile(Utilities.newBlob(bytes, mimeType, fileName));
+  const same = function (p) { return p.seriesId === data.seriesId && p.kind === kind && p.name.toLowerCase() === name.toLowerCase(); };
+
+  return withLock_(function () {
+    rows_('Photos').filter(same).forEach(function (p) { trashFile_(p.fileId); });
+    deleteRows_('Photos', same);
+    const id = Utilities.getUuid();
+    insert_('Photos', { id: id, seriesId: data.seriesId, owner: owner, kind: kind, name: name, fileId: file.getId(),
+      mimeType: mimeType, fileName: fileName, createdAt: now_() });
+    return { id: id, kind: kind, name: name, fileName: fileName, mimeType: mimeType };
+  });
+}
+
+function getPhotoData(token, photoId) {
+  auth_(token);
+  const p = rows_('Photos').filter(function (x) { return x.id === photoId; })[0];
+  if (!p) throw new Error('Foto tidak ditemukan.');
+  return { kind: p.kind, name: p.name, mimeType: p.mimeType, base64: Utilities.base64Encode(DriveApp.getFileById(p.fileId).getBlob().getBytes()) };
+}
+
+function deletePhoto(token, photoId) {
+  const owner = auth_(token);
+  return withLock_(function () {
+    const p = rows_('Photos').filter(function (x) { return x.id === photoId && x.owner === owner; })[0];
+    if (!p) throw new Error('Foto tidak ditemukan.');
+    trashFile_(p.fileId);
+    deleteRows_('Photos', function (x) { return x.id === photoId; });
     return true;
   });
 }
@@ -524,7 +585,7 @@ function parseNarration_(text) {
     });
 
     prev = { setting: setting, time: time, chars: present };
-    return { narration: narr, setting: setting, time: time, weather: weather, mood: mood, characters: chars, dialogues: dialogues };
+    return { source: chunk, narration: narr, setting: setting, time: time, weather: weather, mood: mood, characters: chars, dialogues: dialogues };
   });
 
   // Pastikan pembicara yang muncul juga terdaftar sebagai karakter.
@@ -621,6 +682,7 @@ function normalizeStory_(story) {
   });
   const scenes = (story.scenes || []).slice(0, 60).map(function (s) {
     const sc = {
+      source: clean_(s.source || [s.narration].concat((s.dialogues || []).map(function (d) { return d.text; })).join(' '), 1500),
       narration: clean_(s.narration, 800),
       setting: pick(s.setting, SET, 'meadow'), time: pick(s.time, TIME, 'day'),
       weather: pick(s.weather, WEATHER, 'clear'), mood: pick(s.mood, MOOD, 'calm'),

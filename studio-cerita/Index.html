@@ -94,6 +94,20 @@
               <button class="btn" type="submit">Unggah suara</button>
             </form>
             <ul id="voice-list" class="list"></ul>
+            <hr>
+            <h2>Foto Referensi</h2>
+            <p class="muted">Pakai foto sungguhan di animasimu. <b>Latar</b>: foto tempat untuk adegan. <b>Tokoh</b>: wajah dari foto menjadi kepala tokoh yang bergerak.</p>
+            <form id="form-photo" class="stack">
+              <div class="seg" role="radiogroup">
+                <label class="check"><input type="radio" name="kind" value="background" checked> Latar</label>
+                <label class="check"><input type="radio" name="kind" value="character"> Tokoh</label>
+              </div>
+              <label id="photo-name-label"><span>Dipakai untuk tempat</span><input name="name" list="photo-name-suggest" maxlength="60" placeholder="mis. hutan, rumah, sekolah — kosongkan untuk semua adegan"></label>
+              <datalist id="photo-name-suggest"></datalist>
+              <label>File foto<input name="file" type="file" accept="image/*" required></label>
+              <button class="btn" type="submit">Unggah foto</button>
+            </form>
+            <ul id="photo-list" class="list"></ul>
           </div>
           <div class="card">
             <div class="row-between">

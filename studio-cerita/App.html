@@ -11,7 +11,7 @@ const store = {
   set(k, v) { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch (e) { } }
 };
 
-const S = { token: store.get('sc_token'), user: null, ai: false, series: null, episode: null, editor: null, from: 'gallery', voiceCache: {}, previewStory: null, previewText: '' };
+const S = { token: store.get('sc_token'), user: null, ai: false, series: null, episode: null, editor: null, from: 'gallery', voiceCache: {}, photoCache: {}, previewStory: null, previewText: '' };
 let previewAnim, playerAnim, loginAnim;
 
 /* ----------------------------- utilitas ----------------------------- */
@@ -132,7 +132,7 @@ async function openSeries(id) {
   const f = $('#form-series');
   S.series = { id, title: '', description: '', episodes: [] };
   f.title.value = ''; f.description.value = '';
-  $('#episode-list').innerHTML = ''; $('#voice-list').innerHTML = '';
+  $('#episode-list').innerHTML = ''; $('#voice-list').innerHTML = ''; $('#photo-list').innerHTML = '';
   $('#btn-delete-series').classList.toggle('hidden', !id);
   setSeriesExtras(!!id);
   show('series');
@@ -140,9 +140,9 @@ async function openSeries(id) {
   const mine = await quiet(run('Membuka animasi…', () => api('listMySeries', S.token)));
   const s = mine && mine.find(x => x.id === id); if (!s) return;
   S.series = s; f.title.value = s.title; f.description.value = s.description || '';
-  renderEpisodes(); loadVoices();
+  renderEpisodes(); loadVoices(); loadPhotos();
 }
-function setSeriesExtras(on) { ['#form-voice', '#btn-new-episode'].forEach(sel => $(sel).disabled = !on); $$('#form-voice input, #form-voice button').forEach(el => el.disabled = !on); }
+function setSeriesExtras(on) { $('#btn-new-episode').disabled = !on; $$('#form-voice input, #form-voice button, #form-photo input, #form-photo button').forEach(el => el.disabled = !on); }
 
 $('#form-series').addEventListener('submit', async e => {
   e.preventDefault(); const f = e.target;
@@ -151,7 +151,7 @@ $('#form-series').addEventListener('submit', async e => {
   const isNew = !S.series.id; S.series.id = res.id; S.series.title = f.title.value;
   $('#btn-delete-series').classList.remove('hidden'); setSeriesExtras(true);
   toast(isNew ? 'Animasi dibuat. Sekarang tulis episode pertamanya.' : 'Tersimpan.');
-  if (isNew) { renderEpisodes(); loadVoices(); }
+  if (isNew) { renderEpisodes(); loadVoices(); loadPhotos(); }
 });
 $('#btn-delete-series').addEventListener('click', async () => {
   if (!confirm(`Hapus "${S.series.title}" beserta semua episode dan suaranya? Ini tidak bisa dibatalkan.`)) return;
@@ -211,13 +211,81 @@ async function voiceData(id) {
 }
 async function voicesFor(list) { return (await Promise.all((list || []).map(v => voiceData(v.id).catch(() => null)))).filter(Boolean); }
 
+/* ----------------------------- foto referensi ----------------------------- */
+const PLACE_WORDS = ['hutan', 'pantai', 'gunung', 'kota', 'sekolah', 'desa', 'rumah', 'taman', 'angkasa', 'padang'];
+function photoKind() { return ($('#form-photo [name=kind]:checked') || {}).value || 'background'; }
+function updatePhotoForm() {
+  const isChar = photoKind() === 'character', input = $('#form-photo [name=name]');
+  $('#photo-name-label span').textContent = isChar ? 'Nama tokoh' : 'Dipakai untuk tempat';
+  input.placeholder = isChar ? 'harus sama dengan nama di cerita, mis. Yan' : 'mis. hutan, rumah, sekolah — kosongkan untuk semua adegan';
+  input.required = isChar;
+  const chars = $$('#character-suggest option').map(o => o.value).concat(((S.series && S.series.voices) || []).map(v => v.character));
+  const opts = isChar ? [...new Set(chars)] : PLACE_WORDS;
+  $('#photo-name-suggest').innerHTML = opts.map(v => `<option value="${esc(v)}">`).join('');
+}
+$$('#form-photo [name=kind]').forEach(r => r.addEventListener('change', updatePhotoForm));
+
+/** Perkecil foto di browser: latar maks 1280px; tokoh dipotong persegi 400px (bagian wajah, agak ke atas). */
+function resizeImage(file, kind) {
+  return new Promise((resolve, reject) => {
+    const img = new Image(), url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const c = document.createElement('canvas'), ctx = c.getContext('2d');
+      if (kind === 'character') {
+        const side = Math.min(img.width, img.height), sx = (img.width - side) / 2, sy = img.height > img.width ? (img.height - side) * 0.2 : 0;
+        c.width = c.height = 400; ctx.drawImage(img, sx, sy, side, side, 0, 0, 400, 400);
+      } else {
+        const k = Math.min(1, 1280 / Math.max(img.width, img.height));
+        c.width = Math.round(img.width * k); c.height = Math.round(img.height * k); ctx.drawImage(img, 0, 0, c.width, c.height);
+      }
+      resolve(c.toDataURL('image/jpeg', 0.85).split(',')[1]);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Foto tidak bisa dibaca. Coba format JPG atau PNG.')); };
+    img.src = url;
+  });
+}
+async function photoData(id) {
+  if (!S.photoCache[id]) S.photoCache[id] = await api('getPhotoData', S.token, id);
+  return S.photoCache[id];
+}
+async function photosFor(list) { return (await Promise.all((list || []).map(p => photoData(p.id).catch(() => null)))).filter(Boolean); }
+
+async function loadPhotos() {
+  const ul = $('#photo-list');
+  const photos = await quiet(api('listPhotos', S.token, S.series.id)) || [];
+  S.series.photos = photos;
+  updatePhotoForm();
+  ul.innerHTML = photos.length ? '' : '<li class="muted">Belum ada foto. Tanpa foto, latar dan tokoh digambar sebagai kartun.</li>';
+  photos.forEach(p => {
+    const li = document.createElement('li');
+    const label = p.kind === 'character' ? 'Tokoh: ' + p.name : 'Latar: ' + (p.name || 'semua adegan');
+    li.innerHTML = `<span class="who"><img class="thumb-sm ${p.kind === 'character' ? 'round' : ''}" alt=""><span class="title">${esc(label)}</span></span>
+      <span class="actions"><button class="btn sm danger ghost" data-a="del">Hapus</button></span>`;
+    photoData(p.id).then(d => { $('img', li).src = 'data:' + d.mimeType + ';base64,' + d.base64; }).catch(() => { });
+    $('[data-a=del]', li).onclick = async () => {
+      if (!confirm('Hapus foto ini?')) return;
+      if (await quiet(run('Menghapus…', () => api('deletePhoto', S.token, p.id)))) { delete S.photoCache[p.id]; loadPhotos(); }
+    };
+    ul.appendChild(li);
+  });
+}
+$('#form-photo').addEventListener('submit', async e => {
+  e.preventDefault(); const f = e.target, file = f.file.files[0], kind = photoKind();
+  if (!file) return;
+  const res = await quiet(run('Mengunggah foto…', async () =>
+    api('uploadPhoto', S.token, { seriesId: S.series.id, kind, name: f.name.value, fileName: file.name.replace(/\.\w+$/, '') + '.jpg', mimeType: 'image/jpeg', base64: await resizeImage(file, kind) })));
+  if (res) { toast(kind === 'character' ? 'Wajah ' + res.name + ' siap tampil.' : 'Foto latar siap dipakai.'); f.reset(); updatePhotoForm(); loadPhotos(); }
+});
+
 /* ----------------------------- kontrol pemutar ----------------------------- */
 function mountControls(box, anim) {
   box.innerHTML = `<button class="btn primary icon" data-c="play">▶</button>
     <input type="range" min="0" max="1000" value="0" data-c="seek" aria-label="Posisi">
     <span class="time" data-c="time">0:00 / 0:00</span>
     <label class="check"><input type="checkbox" data-c="tts" checked> Suara narator</label>
-    <label class="check"><input type="checkbox" data-c="music" checked> Musik</label>`;
+    <label class="check"><input type="checkbox" data-c="music" checked> Musik</label>
+    <label class="check" title="Tampilkan judul, nama tokoh, balon kata & narasi"><input type="checkbox" data-c="text"> Teks</label>`;
   const play = $('[data-c=play]', box), seek = $('[data-c=seek]', box), time = $('[data-c=time]', box);
   let dragging = false;
   play.onclick = () => anim.toggle();
@@ -225,6 +293,9 @@ function mountControls(box, anim) {
   seek.onchange = () => { dragging = false; };
   $('[data-c=tts]', box).onchange = e => { anim.tts = e.target.checked; if (!anim.tts && window.speechSynthesis) speechSynthesis.cancel(); };
   $('[data-c=music]', box).onchange = e => { anim.musicOn = e.target.checked; if (anim.music) anim.musicOn && anim.playing ? anim.music.start() : anim.music.stop(); };
+  const textBox = $('[data-c=text]', box);
+  textBox.checked = store.get('sc_text') === '1'; anim.showText = textBox.checked;
+  textBox.onchange = () => { store.set('sc_text', textBox.checked ? '1' : null); anim.setShowText(textBox.checked); };
   anim.onTick = (t, total, playing) => {
     play.textContent = playing ? '❚❚' : '▶';
     if (!dragging) seek.value = total ? t / total * 1000 : 0;
@@ -260,6 +331,7 @@ async function loadPreview(story, autoplay) {
   const num = S.editor.id ? ((S.series.episodes || []).find(e => e.id === S.editor.id) || {}).number : (S.series.episodes || []).length + 1;
   previewAnim.load(story, { title: f.title.value || 'Tanpa Judul', seriesTitle: S.series.title, episodeLabel: 'Episode ' + num, animator: S.user.displayName });
   previewAnim.setVoices(await voicesFor(S.series.voices));
+  await previewAnim.setPhotos(await photosFor(S.series.photos));
   $('#scene-list').innerHTML = story.scenes.map((sc, i) => `<div class="scene-item" data-i="${i}"><b>Adegan ${i + 1}</b> · ${esc(sc.setting)} · ${esc(sc.time)} · ${sc.characters.map(c => esc(c.name)).join(', ') || '—'}
     <div class="muted">${esc(sc.narration || (sc.dialogues[0] ? sc.dialogues[0].speaker + ': ' + sc.dialogues[0].text : ''))}</div></div>`).join('') || '<div class="muted">Belum ada adegan.</div>';
   $$('.scene-item').forEach(el => el.onclick = () => { previewAnim.seekScene(+el.dataset.i); previewAnim.play(); });
@@ -287,7 +359,7 @@ $('#form-episode').addEventListener('submit', async e => {
   if (!res) return;
   toast('Episode tayang di Galeri. Terima kasih sudah berbagi ceritamu.');
   const mine = await quiet(api('listMySeries', S.token));
-  const s = mine && mine.find(x => x.id === S.series.id); if (s) { s.voices = S.series.voices; S.series = s; }
+  const s = mine && mine.find(x => x.id === S.series.id); if (s) { s.voices = S.series.voices; s.photos = S.series.photos; S.series = s; }
   openPlayer(res.id, 'series');
 });
 
@@ -300,6 +372,7 @@ async function openPlayer(episodeId, from) {
   const ep = await quiet(run('Menyiapkan tayangan…', async () => {
     const ep = await api('getEpisode', S.token, episodeId);
     ep.voiceData = await voicesFor(ep.voices);
+    ep.photoData = await photosFor(ep.photos);
     return ep;
   }));
   if (!ep) return;
@@ -311,6 +384,7 @@ async function openPlayer(episodeId, from) {
   const idx = ep.episodes.findIndex(x => x.id === ep.id);
   playerAnim.load(ep.story, { title: ep.title, seriesTitle: ep.seriesTitle, episodeLabel: 'Episode ' + ep.number, animator: ep.animator, hasNext: idx < ep.episodes.length - 1 });
   await playerAnim.setVoices(ep.voiceData);
+  await playerAnim.setPhotos(ep.photoData);
   const next = ep.episodes[idx + 1];
   playerAnim.onEnd = next ? () => toast('Episode berikutnya: ' + next.title) : null;
 

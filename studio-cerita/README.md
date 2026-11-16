@@ -5,10 +5,12 @@ Tulis cerita, lalu lihat cerita itu bergerak. Pengguna masuk dengan username & k
 ## Fitur
 | Kebutuhan | Cara kerjanya |
 |---|---|
-| Narasi → animasi | Cerita diurai menjadi adegan: tempat (hutan, pantai, kota, sekolah, rumah, taman, gunung, desa, angkasa), waktu (pagi/siang/sore/malam), cuaca, tokoh, perasaan, gerakan, dan dialog. Lalu digambar sebagai animasi kartun di kanvas, dengan balon kata, teks narasi, transisi, dan musik latar. |
+| Narasi → animasi | Cerita diurai menjadi adegan: tempat (hutan, pantai, kota, sekolah, rumah, taman, gunung, desa, angkasa), waktu (pagi/siang/sore/malam), cuaca, tokoh, perasaan, gerakan, dan dialog. Lalu digambar sebagai animasi kartun dengan transisi dan musik latar. |
+| Tanpa teks di animasi | Bawaannya animasi hanya berisi **suara dan karakter**. Tokoh yang sedang bicara ditandai dengan mulut/kepala yang bergerak, gelombang suara, dan sorotan lembut di kakinya. Centang **Teks** di bawah pemutar bila sesekali ingin menampilkan judul, nama tokoh, balon kata, dan narasi. |
+| Foto referensi | Di halaman animasi: **Foto Referensi**. **Latar**: foto tempat (isi kata tempat seperti `hutan` agar dipakai di adegan yang menyebut kata itu, atau kosongkan untuk semua adegan), tampil penuh dengan gerak zoom perlahan. **Tokoh**: isi nama tokoh, wajah dari foto menjadi kepala tokoh yang bergerak, berbicara, dan berekspresi. Foto otomatis diperkecil di browser. |
 | Halaman depan ada username & kata sandi | Tab **Masuk** / **Daftar**. Kata sandi disimpan sebagai hash (SHA‑256 + salt), sesi 6 jam, dan akun dikunci sementara setelah 5 kali salah. |
 | Menulis cerita sendiri | **Studio Saya → + Animasi Baru → + Episode Baru**. Tombol **Pratinjau** langsung memutar hasilnya. |
-| Tayang dengan nama animasi & animator, bisa banyak episode | Galeri menampilkan setiap animasi + animator + daftar episode. Video dibuka dengan kartu judul ("Karya …") dan ditutup dengan "Tamat" atau "Bersambung…". |
+| Tayang dengan nama animasi & animator, bisa banyak episode | Galeri dan halaman pemutar menampilkan nama animasi, nama animator, dan daftar episode. Bila **Teks** dicentang, video juga diberi kartu judul ("Karya …") dan penutup ("Tamat"/"Bersambung…"). |
 | Unggah audio referensi suara tokoh | Di halaman animasi: **Suara Karakter**. Setiap kali tokoh itu bicara, rekamannya diputar (dan ikut masuk ke video). Tokoh tanpa rekaman memakai suara bawaan perangkat dengan nada berbeda per tokoh. |
 | Hasil bisa diunduh | **⬇ Unduh Video** (.webm/.mp4, direkam di browser) dan **⬇ Unduh Naskah** (.json). Jika unduhan diblokir browser, ada tombol **Simpan ke Drive**. |
 
@@ -34,9 +36,10 @@ Tulis cerita, lalu lihat cerita itu bergerak. Pengguna masuk dengan username & k
 
 ## Yang perlu diketahui
 - Video direkam secara langsung (real time) di browser, jadi durasi rekaman sama dengan panjang animasi. Biarkan tab tetap terbuka. Paling baik memakai Chrome atau Edge di komputer.
-- Suara narator bawaan perangkat (text-to-speech) **tidak** ikut terekam di video. Gambar, teks, musik, dan suara tokoh yang diunggah ikut terekam.
+- Suara narator bawaan perangkat (text-to-speech) **tidak** ikut terekam di video. Gambar, musik, dan suara tokoh yang diunggah ikut terekam. Agar narasi juga terdengar di video, unggah rekaman suara dengan nama karakter **Narator**.
+- Untuk wajah tokoh, pakai foto yang wajahnya berada di tengah atau agak ke atas. Aplikasi otomatis memotongnya menjadi persegi.
 - Rekaman suara dipakai sebagai suara tokoh, bukan untuk meniru suara (voice cloning).
-- Batas: audio 10 MB per file, cerita 20.000 karakter per episode, video yang disimpan ke Drive maksimal 45 MB.
+- Batas: audio 10 MB per file, foto 5 MB (setelah diperkecil), cerita 20.000 karakter per episode, video yang disimpan ke Drive maksimal 45 MB.
 - Semua data tersimpan di Google Drive milik akun yang men-deploy aplikasi.
 
 ## Struktur file

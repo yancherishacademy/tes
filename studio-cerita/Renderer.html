@@ -175,6 +175,19 @@
     if (time === 'night') { ctx.fillStyle = 'rgba(20,20,60,.25)'; ctx.fillRect(0, 0, W, H); const lg = ctx.createRadialGradient(64, GROUND - 130, 5, 64, GROUND - 130, 220); lg.addColorStop(0, 'rgba(255,220,140,.45)'); lg.addColorStop(1, 'rgba(255,220,140,0)'); ctx.fillStyle = lg; ctx.fillRect(0, 0, 400, H); }
   }
 
+  const SETTING_ID = { meadow: 'padang', forest: 'hutan', beach: 'pantai', mountain: 'gunung', city: 'kota', school: 'sekolah', village: 'desa', room: 'rumah', park: 'taman', space: 'angkasa' };
+  /** Latar dari foto: memenuhi layar, perlahan mendekat agar terasa hidup. */
+  function drawPhotoBackground(ctx, img, scene, st) {
+    const zoom = 1.03 + Math.min(st, 20) * 0.004;
+    const k = Math.max(W / img.width, H / img.height) * zoom, w = img.width * k, h = img.height * k;
+    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+    ctx.drawImage(img, (W - w) / 2 - Math.sin(st * 0.15) * 10, (H - h) / 2, w, h);
+    const g = ctx.createLinearGradient(0, GROUND - 60, 0, H); g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,.28)');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    if (scene.time === 'night') { ctx.fillStyle = 'rgba(10,20,55,.35)'; ctx.fillRect(0, 0, W, H); }
+    else if (scene.time === 'dusk') { ctx.fillStyle = 'rgba(160,80,60,.15)'; ctx.fillRect(0, 0, W, H); }
+  }
+
   function drawWeather(ctx, weather, t) {
     if (weather === 'rain') {
       ctx.fillStyle = 'rgba(40,60,90,.18)'; ctx.fillRect(0, 0, W, H);
@@ -237,6 +250,17 @@
     arm(-1, lh[0], lh[1]); arm(1, rh[0], rh[1]);
     // kepala
     const hy = -150;
+    if (o.photo) {
+      // Kepala dari foto referensi: bingkai bulat, mengangguk saat berbicara.
+      const pulse = o.talking ? 1 + Math.abs(Math.sin(t * 12)) * 0.05 : 1;
+      ctx.save(); ctx.translate(0, hy); ctx.rotate(o.talking ? Math.sin(t * 6) * 0.06 : Math.sin(t * 1.5) * 0.02); ctx.scale(pulse, pulse);
+      ellipse(ctx, 0, 0, 50, 50, body); ellipse(ctx, 0, 0, 46, 46, '#FFFFFF');
+      ctx.beginPath(); ctx.arc(0, 0, 44, 0, TAU); ctx.clip();
+      ctx.scale(o.face, 1); // jangan cerminkan wajah
+      if (a === 'sleep') ctx.globalAlpha = 0.85;
+      ctx.drawImage(o.photo, -44, -44, 88, 88);
+      ctx.restore();
+    } else {
     ellipse(ctx, 0, hy, 42, 40, skin);
     ctx.fillStyle = hair; ctx.beginPath(); ctx.arc(0, hy - 2, 43, Math.PI * 1.02, Math.PI * 1.98); ctx.quadraticCurveTo(18, hy - 20, -6, hy - 26); ctx.quadraticCurveTo(-28, hy - 14, -42, hy - 6); ctx.fill();
     // mata
@@ -271,6 +295,7 @@
     else if (e === 'surprised') { ellipse(ctx, 0, my + 2, 6, 8, '#7A2E2E'); }
     else if (e === 'scared') { ctx.beginPath(); for (let x = -9; x <= 9; x += 3) ctx.lineTo(x, my + (x / 3 % 2 ? 2 : -2)); ctx.stroke(); }
     else { ctx.beginPath(); ctx.arc(0, my - 4, 7, 0.2 * Math.PI, 0.8 * Math.PI); ctx.stroke(); }
+    }
     // efek
     if (e === 'sad') { const ty = (t * 40) % 40; ellipse(ctx, -18, hy + 6 + ty, 3, 5, 'rgba(110,180,240,.9)'); }
     if (e === 'scared') ellipse(ctx, 34, hy - 20 + Math.sin(t * 6) * 2, 4, 7, 'rgba(110,180,240,.9)');
@@ -284,8 +309,15 @@
     if (e === 'love') { heart(ctx, o.x + 40 * o.s, topY - ((t * 30) % 40), 1.8, 'rgba(230,57,70,.85)'); }
     if (e === 'angry') { ctx.strokeStyle = '#D62828'; ctx.lineWidth = 3; const cx = o.x + 36 * o.s, cy = topY + 20; ctx.beginPath(); ctx.moveTo(cx - 8, cy - 3); ctx.lineTo(cx + 8, cy - 3); ctx.moveTo(cx - 8, cy + 3); ctx.lineTo(cx + 8, cy + 3); ctx.moveTo(cx - 3, cy - 8); ctx.lineTo(cx - 3, cy + 8); ctx.moveTo(cx + 3, cy - 8); ctx.lineTo(cx + 3, cy + 8); ctx.stroke(); }
     ctx.globalAlpha = 1;
-    // label nama
-    if (ch.name) {
+    // tanda sedang berbicara (tanpa teks): gelombang suara di samping kepala
+    if (o.talking) {
+      const hx = o.x + 58 * o.s, hyy = o.y - 150 * o.s - lift * o.s;
+      ctx.strokeStyle = 'rgba(255,255,255,.9)'; ctx.lineCap = 'round';
+      for (let i = 0; i < 3; i++) { const p = (t * 1.6 + i / 3) % 1; ctx.globalAlpha = 1 - p; ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(hx, hyy, 8 + p * 26, -0.6, 0.6); ctx.stroke(); }
+      ctx.globalAlpha = 1;
+    }
+    // label nama (hanya bila teks ditampilkan)
+    if (ch.name && o.label) {
     ctx.font = '800 16px Nunito, sans-serif'; const nw = ctx.measureText(ch.name).width + 20;
     ctx.fillStyle = 'rgba(255,255,255,.88)'; rr(ctx, o.x - nw / 2, o.y + 10, nw, 24, 12); ctx.fill();
     ctx.fillStyle = '#2B2A33'; ctx.fillText(ch.name, o.x, o.y + 28);
@@ -353,7 +385,7 @@
     constructor(canvas, opts) {
       this.c = canvas; this.ctx = canvas.getContext('2d'); this.opts = opts || {};
       this.t = 0; this.playing = false; this.tts = true; this.musicOn = true; this.recording = false;
-      this.voices = {}; this.segIdx = -1; this.sources = []; this.last = 0;
+      this.voices = {}; this.photos = { bg: [], chars: {} }; this.showText = false; this._bgCache = {}; this.segIdx = -1; this.sources = []; this.last = 0;
       this._frame = this.frame.bind(this);
     }
     load(story, meta) {
@@ -365,15 +397,17 @@
     buildTimeline() {
       const segs = [], sceneStart = [], sceneEnd = []; let t = 0;
       const push = (o, d) => { segs.push(Object.assign({ start: t, end: t + d, dur: d }, o)); t += d; };
-      if (!this.opts.noTitle) push({ type: 'title', scene: 0 }, 3.5);
-      let line = 0;
+      if (!this.opts.noTitle && this.showText) push({ type: 'title', scene: 0 }, 3.5);
+      let line = 0, narrAt = 0;
       this.story.scenes.forEach((sc, i) => {
         sceneStart[i] = t;
-        push({ type: 'narration', scene: i, text: sc.narration }, sc.narration ? readTime(sc.narration) : 1.6);
+        const nd = sc.narration ? readTime(sc.narration) : 1.6;
+        push({ type: 'narration', scene: i, text: sc.narration, narrAt: sc.narration ? narrAt : -1 }, nd);
+        if (sc.narration) narrAt += nd;
         sc.dialogues.forEach(d => push({ type: 'dialogue', scene: i, speaker: d.speaker, text: d.text, line: line++ }, readTime(d.text)));
         sceneEnd[i] = t;
       });
-      if (!this.opts.noTitle) push({ type: 'end', scene: Math.max(0, this.story.scenes.length - 1) }, 4);
+      if (!this.opts.noTitle && this.showText) push({ type: 'end', scene: Math.max(0, this.story.scenes.length - 1) }, 4);
       this.segs = segs; this.sceneStart = sceneStart; this.sceneEnd = sceneEnd; this.total = t;
     }
     segAt(t) { for (let i = 0; i < this.segs.length; i++) if (t < this.segs[i].end) return i; return this.segs.length - 1; }
@@ -397,6 +431,38 @@
           this.voices[v.character.toLowerCase()] = await this.ac.decodeAudioData(buf.buffer);
         } catch (e) { console.warn('Suara gagal dibaca', v.character, e); }
       }
+    }
+    /** photos: [{kind:'background'|'character', name, mimeType, base64}] */
+    setPhotos(list) {
+      this.photos = { bg: [], chars: {} }; this._bgCache = {};
+      return Promise.all((list || []).map(p => new Promise(res => {
+        const img = new Image();
+        img.onload = () => {
+          if (p.kind === 'character') this.photos.chars[String(p.name).toLowerCase()] = img;
+          else this.photos.bg.push({ name: String(p.name || '').toLowerCase().trim(), img });
+          res();
+        };
+        img.onerror = () => res();
+        img.src = 'data:' + p.mimeType + ';base64,' + p.base64;
+      }))).then(() => this.draw());
+    }
+    photoFor(name) {
+      const n = String(name || '').toLowerCase();
+      return this.photos.chars[n] || this.photos.chars[n.split(' ').pop()] || null;
+    }
+    bgPhotoFor(scene, idx) {
+      if (!this.photos.bg.length) return null;
+      if (idx in this._bgCache) return this._bgCache[idx];
+      const text = ' ' + [scene.source, scene.narration].concat((scene.dialogues || []).map(d => d.text)).join(' ').toLowerCase() + ' ';
+      const label = SETTING_ID[scene.setting] || '';
+      const all = this.photos.bg.find(p => !p.name || p.name === 'semua');
+      const hit = this.photos.bg.find(p => p.name && p.name !== 'semua' && (p.name === label || p.name === scene.setting || text.indexOf(p.name) >= 0));
+      return (this._bgCache[idx] = hit ? hit.img : all ? all.img : null);
+    }
+    setShowText(on) {
+      const frac = this.total ? this.t / this.total : 0;
+      this.showText = !!on;
+      if (this.story) { this.buildTimeline(); this.seek(frac * this.total); }
     }
     voiceFor(name) {
       const n = String(name || '').toLowerCase();
@@ -444,18 +510,22 @@
       const scene = this.story.scenes[seg.scene];
       if (this.music && scene) this.music.mood = scene.mood || 'calm';
       const into = this.t - seg.start;
-      if (seg.type === 'narration' && seg.text) this.speak(seg.text, null);
+      if (seg.type === 'narration' && seg.text) {
+        // Rekaman bernama "Narator" diputar berurutan sepanjang cerita; tanpa itu, pakai suara perangkat.
+        const nv = this.voiceFor('narator');
+        if (nv && seg.narrAt < nv.duration - 0.3) this.playClip(nv, seg, into, seg.narrAt + into); else if (!nv) this.speak(seg.text, null);
+      }
       if (seg.type === 'title') this.speak(this.meta.title || '', null);
       if (seg.type === 'dialogue') {
         const buf = this.voiceFor(seg.speaker);
         if (buf) this.playClip(buf, seg, into); else this.speak(seg.text, seg.speaker);
       }
     }
-    playClip(buf, seg, into) {
+    playClip(buf, seg, into, fixedOffset) {
       if (!this.ac) return;
       const remain = seg.dur - into; if (remain < 0.3) return;
       const long = buf.duration > seg.dur + 1;
-      const offset = long ? (seg.line * 2.7) % (buf.duration - seg.dur) : 0;
+      const offset = fixedOffset != null ? fixedOffset : long ? (seg.line * 2.7) % (buf.duration - seg.dur) : 0;
       const len = Math.min(remain, buf.duration - offset);
       const src = this.ac.createBufferSource(), g = this.ac.createGain(), now = this.ac.currentTime;
       src.buffer = buf; g.gain.setValueAtTime(1, now); g.gain.setValueAtTime(1, now + Math.max(0, len - 0.25)); g.gain.linearRampToValueAtTime(0, now + len);
@@ -501,13 +571,14 @@
       if (seg.type === 'title') return this.drawTitle(into);
       if (seg.type === 'end') return this.drawEnd(into);
       const scene = this.story.scenes[seg.scene], st = this.t - this.sceneStart[seg.scene];
-      drawBackground(ctx, scene, seg.scene, this.t);
+      const photoBg = this.bgPhotoFor(scene, seg.scene);
+      if (photoBg) drawPhotoBackground(ctx, photoBg, scene, st); else drawBackground(ctx, scene, seg.scene, this.t);
       this.drawCast(scene, seg, st, into);
       if (scene.setting !== 'room') drawWeather(ctx, scene.weather, this.t);
       // fade antar adegan
       const fade = Math.min(1, st / 0.45, (this.sceneEnd[seg.scene] - this.t) / 0.35);
       if (fade < 1) { ctx.fillStyle = `rgba(22,18,32,${1 - fade})`; ctx.fillRect(0, 0, W, H); }
-      if (this.meta.title) {
+      if (this.showText && this.meta.title) {
         ctx.save(); ctx.font = '700 14px Nunito, sans-serif'; ctx.fillStyle = 'rgba(255,255,255,.85)'; ctx.shadowColor = 'rgba(0,0,0,.4)'; ctx.shadowBlur = 4;
         ctx.fillText(this.meta.title + (this.meta.animator ? '  ·  ' + this.meta.animator : ''), 18, 26); ctx.restore();
       }
@@ -528,9 +599,11 @@
         const target = speakerIdx >= 0 && speakerIdx !== i ? pos[speakerIdx] : W / 2;
         const face = vel ? Math.sign(vel) : (target >= x ? 1 : -1);
         const talking = c.name === speaker;
-        const h = drawCharacter(ctx, base, { x, y: GROUND + 35, s, face, look: (target - x) / 200, emotion: c.emotion, action: c.action, talking, t: this.t + i * 0.7 });
+        if (talking) ellipse(ctx, x, GROUND + 35, 70 * s, 16 * s, 'rgba(255,240,180,.45)');
+        const h = drawCharacter(ctx, base, { x, y: GROUND + 35, s, face, look: (target - x) / 200, emotion: c.emotion, action: c.action, talking, t: this.t + i * 0.7, photo: this.photoFor(c.name), label: this.showText });
         if (talking) head = h;
       });
+      if (!this.showText) return;
       if (seg.type === 'narration' && seg.text) caption(ctx, seg.text);
       if (seg.type === 'dialogue') {
         if (head) bubble(ctx, seg.text, head.headX, head.headY, into);
