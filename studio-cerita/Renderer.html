@@ -434,7 +434,7 @@
     }
     /** photos: [{kind:'background'|'character', name, mimeType, base64}] */
     setPhotos(list) {
-      this.photos = { bg: [], chars: {} }; this._bgCache = {};
+      this.photos = { bg: [], chars: {} }; this._bgCache = {}; this._bgName = {};
       return Promise.all((list || []).map(p => new Promise(res => {
         const img = new Image();
         img.onload = () => {
@@ -457,8 +457,12 @@
       const label = SETTING_ID[scene.setting] || '';
       const all = this.photos.bg.find(p => !p.name || p.name === 'semua');
       const hit = this.photos.bg.find(p => p.name && p.name !== 'semua' && (p.name === label || p.name === scene.setting || text.indexOf(p.name) >= 0));
-      return (this._bgCache[idx] = hit ? hit.img : all ? all.img : null);
+      // Urutan: foto yang cocok dengan kata tempat → foto "semua adegan" → foto yang ada (bergiliran per adegan).
+      const pick = hit || all || this.photos.bg[idx % this.photos.bg.length];
+      this._bgName = this._bgName || {}; this._bgName[idx] = pick.name || 'semua adegan';
+      return (this._bgCache[idx] = pick.img);
     }
+    bgPhotoLabel(idx) { return this.story && this.story.scenes[idx] && this.bgPhotoFor(this.story.scenes[idx], idx) ? this._bgName[idx] : null; }
     setShowText(on) {
       const frac = this.total ? this.t / this.total : 0;
       this.showText = !!on;

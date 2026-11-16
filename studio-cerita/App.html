@@ -330,9 +330,15 @@ async function loadPreview(story, autoplay) {
   const f = $('#form-episode');
   const num = S.editor.id ? ((S.series.episodes || []).find(e => e.id === S.editor.id) || {}).number : (S.series.episodes || []).length + 1;
   previewAnim.load(story, { title: f.title.value || 'Tanpa Judul', seriesTitle: S.series.title, episodeLabel: 'Episode ' + num, animator: S.user.displayName });
+  // Ambil daftar suara & foto terbaru, agar unggahan terakhir langsung terpakai di pratinjau.
+  const [voices, photos] = await Promise.all([quiet(api('listVoices', S.token, S.series.id)), quiet(api('listPhotos', S.token, S.series.id))]);
+  if (voices) S.series.voices = voices;
+  if (photos) S.series.photos = photos;
   previewAnim.setVoices(await voicesFor(S.series.voices));
-  await previewAnim.setPhotos(await photosFor(S.series.photos));
-  $('#scene-list').innerHTML = story.scenes.map((sc, i) => `<div class="scene-item" data-i="${i}"><b>Adegan ${i + 1}</b> · ${esc(sc.setting)} · ${esc(sc.time)} · ${sc.characters.map(c => esc(c.name)).join(', ') || '—'}
+  const photoData = await photosFor(S.series.photos);
+  if ((S.series.photos || []).length > photoData.length) toast('Ada foto yang belum bisa dimuat. Coba unggah ulang.');
+  await previewAnim.setPhotos(photoData);
+  $('#scene-list').innerHTML = story.scenes.map((sc, i) => `<div class="scene-item" data-i="${i}"><b>Adegan ${i + 1}</b> · ${previewAnim.bgPhotoLabel(i) ? '📷 latar: ' + esc(previewAnim.bgPhotoLabel(i)) : esc(sc.setting)} · ${esc(sc.time)} · ${sc.characters.map(c => esc(c.name)).join(', ') || '—'}
     <div class="muted">${esc(sc.narration || (sc.dialogues[0] ? sc.dialogues[0].speaker + ': ' + sc.dialogues[0].text : ''))}</div></div>`).join('') || '<div class="muted">Belum ada adegan.</div>';
   $$('.scene-item').forEach(el => el.onclick = () => { previewAnim.seekScene(+el.dataset.i); previewAnim.play(); });
   $('#character-suggest').innerHTML = story.characters.map(c => `<option value="${esc(c.name)}">`).join('');
@@ -385,6 +391,7 @@ async function openPlayer(episodeId, from) {
   playerAnim.load(ep.story, { title: ep.title, seriesTitle: ep.seriesTitle, episodeLabel: 'Episode ' + ep.number, animator: ep.animator, hasNext: idx < ep.episodes.length - 1 });
   await playerAnim.setVoices(ep.voiceData);
   await playerAnim.setPhotos(ep.photoData);
+  if ((ep.photos || []).length > ep.photoData.length) toast('Ada foto yang belum bisa dimuat. Coba unggah ulang.');
   const next = ep.episodes[idx + 1];
   playerAnim.onEnd = next ? () => toast('Episode berikutnya: ' + next.title) : null;
 
