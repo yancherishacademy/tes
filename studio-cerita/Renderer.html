@@ -385,7 +385,7 @@
     constructor(canvas, opts) {
       this.c = canvas; this.ctx = canvas.getContext('2d'); this.opts = opts || {};
       this.t = 0; this.playing = false; this.tts = true; this.musicOn = true; this.recording = false;
-      this.voices = {}; this.photos = { bg: [], chars: {} }; this.showText = false; this._bgCache = {}; this.segIdx = -1; this.sources = []; this.last = 0;
+      this.lineAudio = {}; this.photos = { bg: [], chars: {} }; this.showText = false; this._bgCache = {}; this.segIdx = -1; this.sources = []; this.last = 0;
       this._frame = this.frame.bind(this);
     }
     load(story, meta) {
@@ -398,13 +398,11 @@
       const segs = [], sceneStart = [], sceneEnd = []; let t = 0;
       const push = (o, d) => { segs.push(Object.assign({ start: t, end: t + d, dur: d }, o)); t += d; };
       if (!this.opts.noTitle && this.showText) push({ type: 'title', scene: 0 }, 3.5);
-      let line = 0, narrAt = 0;
+      const dur = (text, audio) => { const b = audio && this.lineAudio[audio]; return b ? Math.max(1.2, b.duration + 0.45) : readTime(text); };
       this.story.scenes.forEach((sc, i) => {
         sceneStart[i] = t;
-        const nd = sc.narration ? readTime(sc.narration) : 1.6;
-        push({ type: 'narration', scene: i, text: sc.narration, narrAt: sc.narration ? narrAt : -1 }, nd);
-        if (sc.narration) narrAt += nd;
-        sc.dialogues.forEach(d => push({ type: 'dialogue', scene: i, speaker: d.speaker, text: d.text, line: line++ }, readTime(d.text)));
+        push({ type: 'narration', scene: i, text: sc.narration, audio: sc.narrationAudio }, sc.narration ? dur(sc.narration, sc.narrationAudio) : 1.6);
+        sc.dialogues.forEach(d => push({ type: 'dialogue', scene: i, speaker: d.speaker, text: d.text, audio: d.audio }, dur(d.text, d.audio)));
         sceneEnd[i] = t;
       });
       if (!this.opts.noTitle && this.showText) push({ type: 'end', scene: Math.max(0, this.story.scenes.length - 1) }, 4);
@@ -422,16 +420,20 @@
       if (this.ac.state === 'suspended') this.ac.resume();
     }
     /** voices: [{character, mimeType, base64}] */
-    async setVoices(list) {
-      this.ensureAudio(); this.voices = {};
-      for (const v of list || []) {
+    /** Audio suara tiruan per baris: { fileId: base64 mp3 }. Timeline menyesuaikan panjang audio. */
+    async setLineAudio(map) {
+      this.ensureAudio(); this.lineAudio = {};
+      for (const id of Object.keys(map || {})) {
         try {
-          const bin = atob(v.base64), buf = new Uint8Array(bin.length);
+          const bin = atob(map[id]), buf = new Uint8Array(bin.length);
           for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
-          this.voices[v.character.toLowerCase()] = await this.ac.decodeAudioData(buf.buffer);
-        } catch (e) { console.warn('Suara gagal dibaca', v.character, e); }
+          this.lineAudio[id] = await this.ac.decodeAudioData(buf.buffer);
+        } catch (e) { console.warn('Audio baris gagal dibaca', id, e); }
       }
+      if (this.story) { this.buildTimeline(); this.seek(0); }
     }
+    /** Baris yang belum punya suara tiruan (dibacakan suara perangkat, tidak ikut terekam). */
+    missingAudio() { return (this.segs || []).filter(s => (s.type === 'narration' && s.text || s.type === 'dialogue') && !(s.audio && this.lineAudio[s.audio])).length; }
     /** photos: [{kind:'background'|'character', name, mimeType, base64}] */
     setPhotos(list) {
       this.photos = { bg: [], chars: {} }; this._bgCache = {}; this._bgName = {};
@@ -467,10 +469,6 @@
       const frac = this.total ? this.t / this.total : 0;
       this.showText = !!on;
       if (this.story) { this.buildTimeline(); this.seek(frac * this.total); }
-    }
-    voiceFor(name) {
-      const n = String(name || '').toLowerCase();
-      return this.voices[n] || this.voices[n.split(' ').pop()] || null;
     }
 
     play() {
@@ -514,26 +512,17 @@
       const scene = this.story.scenes[seg.scene];
       if (this.music && scene) this.music.mood = scene.mood || 'calm';
       const into = this.t - seg.start;
-      if (seg.type === 'narration' && seg.text) {
-        // Rekaman bernama "Narator" diputar berurutan sepanjang cerita; tanpa itu, pakai suara perangkat.
-        const nv = this.voiceFor('narator');
-        if (nv && seg.narrAt < nv.duration - 0.3) this.playClip(nv, seg, into, seg.narrAt + into); else if (!nv) this.speak(seg.text, null);
-      }
-      if (seg.type === 'title') this.speak(this.meta.title || '', null);
-      if (seg.type === 'dialogue') {
-        const buf = this.voiceFor(seg.speaker);
-        if (buf) this.playClip(buf, seg, into); else this.speak(seg.text, seg.speaker);
-      }
+      if (seg.type === 'title') return this.speak(this.meta.title || '', null);
+      if (seg.type !== 'narration' && seg.type !== 'dialogue') return;
+      if (!seg.text) return;
+      // Suara tiruan (dibuat dari rekaman yang diunggah) membacakan baris ini; tanpa itu, suara perangkat.
+      const buf = seg.audio && this.lineAudio[seg.audio];
+      if (buf) this.playLine(buf, into); else this.speak(seg.text, seg.type === 'dialogue' ? seg.speaker : null);
     }
-    playClip(buf, seg, into, fixedOffset) {
-      if (!this.ac) return;
-      const remain = seg.dur - into; if (remain < 0.3) return;
-      const long = buf.duration > seg.dur + 1;
-      const offset = fixedOffset != null ? fixedOffset : long ? (seg.line * 2.7) % (buf.duration - seg.dur) : 0;
-      const len = Math.min(remain, buf.duration - offset);
-      const src = this.ac.createBufferSource(), g = this.ac.createGain(), now = this.ac.currentTime;
-      src.buffer = buf; g.gain.setValueAtTime(1, now); g.gain.setValueAtTime(1, now + Math.max(0, len - 0.25)); g.gain.linearRampToValueAtTime(0, now + len);
-      src.connect(g); g.connect(this.master); src.start(now, offset, len); this.sources.push(src);
+    playLine(buf, into) {
+      if (!this.ac || into >= buf.duration - 0.1) return;
+      const src = this.ac.createBufferSource();
+      src.buffer = buf; src.connect(this.master); src.start(this.ac.currentTime, Math.max(0, into)); this.sources.push(src);
     }
     speak(text, speaker) {
       if (!this.tts || this.recording || !global.speechSynthesis || !text) return;

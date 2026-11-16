@@ -22,7 +22,7 @@ const SHEETS = {
   Users:    ['username', 'salt', 'hash', 'displayName', 'createdAt'],
   Series:   ['id', 'title', 'description', 'owner', 'createdAt', 'updatedAt'],
   Episodes: ['id', 'seriesId', 'number', 'title', 'narration', 'scenes', 'owner', 'createdAt', 'updatedAt'],
-  Voices:   ['id', 'seriesId', 'owner', 'character', 'fileId', 'mimeType', 'fileName', 'createdAt'],
+  Voices:   ['id', 'seriesId', 'owner', 'character', 'fileId', 'mimeType', 'fileName', 'createdAt', 'cloneId', 'consent'],
   Photos:   ['id', 'seriesId', 'owner', 'kind', 'name', 'fileId', 'mimeType', 'fileName', 'createdAt']
 };
 
@@ -71,6 +71,8 @@ function sheet_(name) {
     sh.setFrozenRows(1);
     const def = ss.getSheetByName('Sheet1') || ss.getSheetByName('Lembar1');
     if (def && ss.getSheets().length > 1) ss.deleteSheet(def);
+  } else if (sh.getLastColumn() < SHEETS[name].length) {
+    sh.getRange(1, 1, 1, SHEETS[name].length).setValues([SHEETS[name]]).setFontWeight('bold');
   }
   return sh;
 }
@@ -240,7 +242,7 @@ function deleteSeries(token, seriesId) {
   return withLock_(function () {
     ownedSeries_(seriesId, owner);
     rows_('Episodes').filter(function (e) { return e.seriesId === seriesId; }).forEach(function (e) { trashScenes_(e.scenes); });
-    rows_('Voices').filter(function (v) { return v.seriesId === seriesId; }).forEach(function (v) { trashFile_(v.fileId); });
+    rows_('Voices').filter(function (v) { return v.seriesId === seriesId; }).forEach(function (v) { trashFile_(v.fileId); deleteClone_(v.cloneId); });
     rows_('Photos').filter(function (v) { return v.seriesId === seriesId; }).forEach(function (v) { trashFile_(v.fileId); });
     deleteRows_('Photos', function (v) { return v.seriesId === seriesId; });
     deleteRows_('Episodes', function (e) { return e.seriesId === seriesId; });
@@ -340,11 +342,47 @@ function trashFile_(id) {
   try { DriveApp.getFileById(id).setTrashed(true); } catch (e) { /* sudah tidak ada */ }
 }
 
-/* ============================== SUARA KARAKTER ============================== */
+/* ============================== SUARA (PENIRUAN SUARA) ==============================
+ * Rekaman yang diunggah dipakai sebagai CONTOH suara. Layanan peniruan suara (ElevenLabs)
+ * mempelajari gaya suaranya, lalu membacakan setiap baris narasi/dialog dengan suara itu.
+ * Nama "Narator" = pembaca narasi. Nama tokoh = pembaca dialog tokoh itu.
+ * Tokoh tanpa suara sendiri ikut dibacakan oleh suara Narator.
+ * Script Properties: ELEVENLABS_API_KEY (wajib untuk fitur ini), ELEVENLABS_MODEL (opsional). */
+
+const XI_BASE = 'https://api.elevenlabs.io/v1';
+
+function xiKey_() { return PropertiesService.getScriptProperties().getProperty('ELEVENLABS_API_KEY'); }
+function xiModel_() { return PropertiesService.getScriptProperties().getProperty('ELEVENLABS_MODEL') || 'eleven_multilingual_v2'; }
+function isCloneEnabled() { return !!xiKey_(); }
+
+function xiError_(res) {
+  let msg = res.getContentText().slice(0, 300);
+  try { const j = JSON.parse(res.getContentText()); msg = (j.detail && (j.detail.message || j.detail.status || j.detail)) || msg; } catch (e) { }
+  return new Error('Layanan peniruan suara menolak permintaan (' + res.getResponseCode() + '): ' + (typeof msg === 'string' ? msg : JSON.stringify(msg)));
+}
+
+/** Buat suara tiruan dari rekaman di Drive. Mengembalikan voice_id. */
+function cloneFromFile_(fileId, label) {
+  const key = xiKey_();
+  if (!key) throw new Error('Peniruan suara belum aktif. Admin perlu mengisi ELEVENLABS_API_KEY di Properti skrip.');
+  const res = UrlFetchApp.fetch(XI_BASE + '/voices/add', {
+    method: 'post', muteHttpExceptions: true, headers: { 'xi-api-key': key },
+    payload: { name: ('Studio Cerita - ' + label).slice(0, 90), description: 'Dibuat dari rekaman yang diunggah ke Studio Cerita.',
+      remove_background_noise: 'true', files: DriveApp.getFileById(fileId).getBlob() }
+  });
+  if (res.getResponseCode() !== 200) throw xiError_(res);
+  return JSON.parse(res.getContentText()).voice_id;
+}
+
+function deleteClone_(cloneId) {
+  const key = xiKey_();
+  if (!cloneId || !key) return;
+  try { UrlFetchApp.fetch(XI_BASE + '/voices/' + encodeURIComponent(cloneId), { method: 'delete', muteHttpExceptions: true, headers: { 'xi-api-key': key } }); } catch (e) { }
+}
 
 function voicesOf_(seriesId) {
   return rows_('Voices').filter(function (v) { return v.seriesId === seriesId; })
-    .map(function (v) { return { id: v.id, character: v.character, fileName: v.fileName, mimeType: v.mimeType }; });
+    .map(function (v) { return { id: v.id, character: v.character, fileName: v.fileName, mimeType: v.mimeType, cloned: !!v.cloneId }; });
 }
 
 function listVoices(token, seriesId) {
@@ -357,23 +395,46 @@ function uploadVoice(token, data) {
   ownedSeries_(data.seriesId, owner);
   const character = clean_(data.character, 60);
   const mimeType = clean_(data.mimeType, 80) || 'audio/mpeg';
-  if (!character) throw new Error('Tulis nama karakter untuk suara ini.');
+  if (!character) throw new Error('Tulis nama pemilik suara: "Narator" atau nama tokoh.');
   if (mimeType.indexOf('audio/') !== 0) throw new Error('Mohon unggah file audio (mp3, wav, m4a, ogg).');
+  if (data.clone && !data.consent) throw new Error('Centang persetujuan bahwa kamu pemilik suara ini atau sudah mendapat izinnya.');
   const bytes = Utilities.base64Decode(String(data.base64 || ''));
   if (!bytes.length) throw new Error('File audio kosong.');
   if (bytes.length > MAX_AUDIO_BYTES) throw new Error('Ukuran audio maksimal 10 MB.');
   const fileName = clean_(data.fileName, 120) || (character + '.mp3');
   const file = folder_().createFile(Utilities.newBlob(bytes, mimeType, fileName));
 
+  let cloneId = '';
+  if (data.clone) {
+    try { cloneId = cloneFromFile_(file.getId(), character); }
+    catch (e) { trashFile_(file.getId()); throw e; }
+  }
+
   return withLock_(function () {
-    // Satu suara per karakter per seri: ganti yang lama.
-    rows_('Voices').filter(function (v) { return v.seriesId === data.seriesId && v.character.toLowerCase() === character.toLowerCase(); })
-      .forEach(function (v) { trashFile_(v.fileId); });
-    deleteRows_('Voices', function (v) { return v.seriesId === data.seriesId && v.character.toLowerCase() === character.toLowerCase(); });
+    // Satu suara per nama per seri: ganti yang lama.
+    const same = function (v) { return v.seriesId === data.seriesId && v.character.toLowerCase() === character.toLowerCase(); };
+    rows_('Voices').filter(same).forEach(function (v) { trashFile_(v.fileId); deleteClone_(v.cloneId); });
+    deleteRows_('Voices', same);
     const id = Utilities.getUuid();
     insert_('Voices', { id: id, seriesId: data.seriesId, owner: owner, character: character, fileId: file.getId(),
-      mimeType: mimeType, fileName: fileName, createdAt: now_() });
-    return { id: id, character: character, fileName: fileName, mimeType: mimeType };
+      mimeType: mimeType, fileName: fileName, createdAt: now_(), cloneId: cloneId, consent: data.consent ? now_() : '' });
+    return { id: id, character: character, fileName: fileName, mimeType: mimeType, cloned: !!cloneId };
+  });
+}
+
+/** Tiru suara dari rekaman yang sudah diunggah sebelumnya. */
+function cloneVoice(token, voiceId, consent) {
+  const owner = auth_(token);
+  if (!consent) throw new Error('Centang persetujuan bahwa kamu pemilik suara ini atau sudah mendapat izinnya.');
+  const v = rows_('Voices').filter(function (x) { return x.id === voiceId && x.owner === owner; })[0];
+  if (!v) throw new Error('Suara tidak ditemukan.');
+  const cloneId = cloneFromFile_(v.fileId, v.character);
+  return withLock_(function () {
+    const row = rows_('Voices').filter(function (x) { return x.id === voiceId; })[0];
+    deleteClone_(row.cloneId);
+    row.cloneId = cloneId; row.consent = now_();
+    update_('Voices', row._row, row);
+    return true;
   });
 }
 
@@ -389,10 +450,98 @@ function deleteVoice(token, voiceId) {
   return withLock_(function () {
     const v = rows_('Voices').filter(function (x) { return x.id === voiceId && x.owner === owner; })[0];
     if (!v) throw new Error('Suara tidak ditemukan.');
-    trashFile_(v.fileId);
+    trashFile_(v.fileId); deleteClone_(v.cloneId);
     deleteRows_('Voices', function (x) { return x.id === voiceId; });
     return true;
   });
+}
+
+/* ---------- membacakan cerita dengan suara tiruan ---------- */
+
+function md5_(s) {
+  return Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, s, Utilities.Charset.UTF_8)
+    .map(function (b) { return ('0' + (b & 255).toString(16)).slice(-2); }).join('');
+}
+
+/** Hasil suara disimpan di Drive dan dipakai ulang bila teks & suara sama. */
+function synthLine_(cloneId, text) {
+  const model = xiModel_();
+  const name = 'suara-' + md5_(cloneId + '|' + model + '|' + text) + '.mp3';
+  const folder = folder_();
+  const found = folder.getFilesByName(name);
+  if (found.hasNext()) return found.next().getId();
+  const res = UrlFetchApp.fetch(XI_BASE + '/text-to-speech/' + encodeURIComponent(cloneId) + '?output_format=mp3_44100_64', {
+    method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+    headers: { 'xi-api-key': xiKey_(), 'Accept': 'audio/mpeg' },
+    payload: JSON.stringify({ text: text, model_id: model, voice_settings: { stability: 0.5, similarity_boost: 0.85, style: 0.2, use_speaker_boost: true } })
+  });
+  if (res.getResponseCode() !== 200) throw xiError_(res);
+  return folder.createFile(res.getBlob().setName(name)).getId();
+}
+
+/**
+ * Buat suara tiruan untuk semua baris episode. Dipanggil berulang dari browser sampai done=true
+ * (tiap panggilan berhenti sebelum batas waktu Apps Script).
+ */
+function generateEpisodeAudio(token, episodeId) {
+  const owner = auth_(token);
+  if (!xiKey_()) throw new Error('Peniruan suara belum aktif. Admin perlu mengisi ELEVENLABS_API_KEY di Properti skrip.');
+  const started = Date.now();
+  const e = rows_('Episodes').filter(function (x) { return x.id === episodeId && x.owner === owner; })[0];
+  if (!e) throw new Error('Episode tidak ditemukan.');
+  const story = JSON.parse(unpackScenes_(e.scenes));
+  const clones = {};
+  rows_('Voices').filter(function (v) { return v.seriesId === e.seriesId && v.cloneId; })
+    .forEach(function (v) { clones[v.character.toLowerCase()] = v.cloneId; });
+  const narrator = clones['narator'] || clones['narrator'] || '';
+  const voiceFor = function (speaker) {
+    const n = String(speaker || '').toLowerCase();
+    return clones[n] || clones[n.split(' ').pop()] || narrator;
+  };
+
+  // Kumpulkan baris: [objek, field audio, field kunci, teks, voice]
+  const lines = [];
+  story.scenes.forEach(function (sc) {
+    if (sc.narration) lines.push([sc, 'narrationAudio', 'narrationKey', sc.narration, narrator]);
+    sc.dialogues.forEach(function (d) { lines.push([d, 'audio', 'audioKey', d.text, voiceFor(d.speaker)]); });
+  });
+
+  let done = 0, made = 0, timedOut = false;
+  for (let i = 0; i < lines.length; i++) {
+    const L = lines[i], obj = L[0], key = L[4] ? md5_(L[4] + '|' + xiModel_() + '|' + L[3]) : '';
+    if (!key) { delete obj[L[1]]; delete obj[L[2]]; done++; continue; }
+    if (obj[L[2]] === key && obj[L[1]]) { done++; continue; }
+    if (Date.now() - started > 240000) { timedOut = true; break; }
+    obj[L[1]] = synthLine_(L[4], L[3]); obj[L[2]] = key; done++; made++;
+  }
+
+  if (made || lines.some(function (L) { return !L[4]; })) {
+    withLock_(function () {
+      const row = rows_('Episodes').filter(function (x) { return x.id === episodeId; })[0];
+      if (!row) return;
+      trashScenes_(row.scenes);
+      row.scenes = packScenes_(JSON.stringify(story)); row.updatedAt = now_();
+      update_('Episodes', row._row, row);
+    });
+  }
+  return { done: !timedOut, finished: done, total: lines.length, voiced: lines.filter(function (L) { return L[4]; }).length };
+}
+
+/** Ambil audio baris (mp3) untuk diputar & direkam. Hanya file milik aplikasi ini. */
+function getAudioBatch(token, ids) {
+  auth_(token);
+  const folderId = folder_().getId(), out = {};
+  (ids || []).slice(0, 12).forEach(function (id) {
+    id = String(id || '');
+    if (!/^[\w-]{10,100}$/.test(id)) return;
+    try {
+      const f = DriveApp.getFileById(id), parents = f.getParents();
+      let ok = false;
+      while (parents.hasNext()) if (parents.next().getId() === folderId) ok = true;
+      if (ok && /^suara-/.test(f.getName())) out[id] = Utilities.base64Encode(f.getBlob().getBytes());
+    } catch (e) { /* lewati */ }
+  });
+  return out;
 }
 
 /* ============================== FOTO REFERENSI ============================== */
@@ -684,13 +833,17 @@ function normalizeStory_(story) {
     const sc = {
       source: clean_(s.source || [s.narration].concat((s.dialogues || []).map(function (d) { return d.text; })).join(' '), 1500),
       narration: clean_(s.narration, 800),
+      narrationAudio: /^[\w-]{10,100}$/.test(s.narrationAudio || '') ? s.narrationAudio : undefined,
+      narrationKey: s.narrationKey ? clean_(s.narrationKey, 40) : undefined,
       setting: pick(s.setting, SET, 'meadow'), time: pick(s.time, TIME, 'day'),
       weather: pick(s.weather, WEATHER, 'clear'), mood: pick(s.mood, MOOD, 'calm'),
       characters: (s.characters || []).slice(0, 4).map(function (c) {
         return { name: clean_(c.name, 40), emotion: pick(c.emotion, EMO, 'neutral'), action: pick(c.action, ACT, 'idle') };
       }).filter(function (c) { return c.name; }),
       dialogues: (s.dialogues || []).slice(0, 20).map(function (d) {
-        return { speaker: clean_(d.speaker, 40) || 'Narator', text: clean_(d.text, 400) };
+        const o = { speaker: clean_(d.speaker, 40) || 'Narator', text: clean_(d.text, 400) };
+        if (/^[\w-]{10,100}$/.test(d.audio || '')) { o.audio = d.audio; o.audioKey = clean_(d.audioKey, 40); }
+        return o;
       }).filter(function (d) { return d.text; })
     };
     sc.characters.concat(sc.dialogues.map(function (d) { return { name: d.speaker }; })).forEach(function (c) {

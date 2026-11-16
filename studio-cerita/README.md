@@ -11,7 +11,7 @@ Tulis cerita, lalu lihat cerita itu bergerak. Pengguna masuk dengan username & k
 | Halaman depan ada username & kata sandi | Tab **Masuk** / **Daftar**. Kata sandi disimpan sebagai hash (SHA‑256 + salt), sesi 6 jam, dan akun dikunci sementara setelah 5 kali salah. |
 | Menulis cerita sendiri | **Studio Saya → + Animasi Baru → + Episode Baru**. Tombol **Pratinjau** langsung memutar hasilnya. |
 | Tayang dengan nama animasi & animator, bisa banyak episode | Galeri dan halaman pemutar menampilkan nama animasi, nama animator, dan daftar episode. Bila **Teks** dicentang, video juga diberi kartu judul ("Karya …") dan penutup ("Tamat"/"Bersambung…"). |
-| Unggah audio referensi suara tokoh | Di halaman animasi: **Suara Karakter**. Setiap kali tokoh itu bicara, rekamannya diputar (dan ikut masuk ke video). Tokoh tanpa rekaman memakai suara bawaan perangkat dengan nada berbeda per tokoh. |
+| Unggah audio → suara ditiru | Di halaman animasi: **Suara Pembaca**. Rekaman dipakai sebagai *contoh suara*: layanan peniruan suara (ElevenLabs) mempelajari gayanya, lalu **membacakan setiap baris narasi & dialog sesuai teks cerita** dengan suara itu. Nama **Narator** = pembaca narasi (dan tokoh yang tak punya suara sendiri); nama tokoh = pembaca dialog tokoh itu. Suara dibuat otomatis saat **Simpan & Tayangkan**, disimpan di Drive, dan ikut terekam di video unduhan. |
 | Hasil bisa diunduh | **⬇ Unduh Video** (.webm/.mp4, direkam di browser) dan **⬇ Unduh Naskah** (.json). Jika unduhan diblokir browser, ada tombol **Simpan ke Drive**. |
 
 ## Pemasangan (± 5 menit)
@@ -26,6 +26,14 @@ Tulis cerita, lalu lihat cerita itu bergerak. Pengguna masuk dengan username & k
    - Yang memiliki akses: **Siapa saja** (atau hanya anggota domain sekolah)
 5. Buka URL aplikasi web, lalu **Daftar** akun pertama.
 
+### Aktifkan peniruan suara (ElevenLabs)
+1. Buat akun di <https://elevenlabs.io>. Peniruan suara (*Instant Voice Cloning*) butuh paket berbayar; paket termurah sudah cukup.
+2. Buka **Profile → API Keys**, buat kunci baru (beri izin *Text to Speech* dan *Voices*).
+3. Di Apps Script: **Setelan proyek → Properti skrip**, tambahkan `ELEVENLABS_API_KEY` = kunci tadi. Opsional: `ELEVENLABS_MODEL` (bawaan `eleven_multilingual_v2`, mendukung bahasa Indonesia).
+4. Deploy versi baru. Di halaman animasi, unggah suara bernama **Narator** dan centang persetujuan.
+
+Tanpa kunci ini, aplikasi tetap berjalan: cerita dibacakan suara bawaan perangkat (tidak ikut terekam di video).
+
 ### Opsional: olah cerita dengan AI
 **Setelan proyek → Properti skrip**, tambahkan `GEMINI_API_KEY` (dan opsional `GEMINI_MODEL`, bawaan `gemini-2.5-flash`). Kotak centang *"Bantu olah cerita dengan AI"* akan muncul di editor. Jika AI gagal, aplikasi kembali ke pengurai bawaan.
 
@@ -36,9 +44,11 @@ Tulis cerita, lalu lihat cerita itu bergerak. Pengguna masuk dengan username & k
 
 ## Yang perlu diketahui
 - Video direkam secara langsung (real time) di browser, jadi durasi rekaman sama dengan panjang animasi. Biarkan tab tetap terbuka. Paling baik memakai Chrome atau Edge di komputer.
-- Suara narator bawaan perangkat (text-to-speech) **tidak** ikut terekam di video. Gambar, musik, dan suara tokoh yang diunggah ikut terekam. Agar narasi juga terdengar di video, unggah rekaman suara dengan nama karakter **Narator**.
+- Suara tiruan ikut terekam di video. Baris tanpa suara tiruan dibacakan suara bawaan perangkat yang **tidak** ikut terekam.
+- Rekaman contoh terbaik: 30 detik–2 menit, satu orang, jernih, tanpa musik. Makin jernih contohnya, makin mirip hasilnya.
+- Peniruan suara hanya untuk suara milik sendiri atau dengan izin pemiliknya (aplikasi meminta persetujuan setiap unggah).
+- Biaya ElevenLabs dihitung per karakter teks yang dibacakan. Baris yang tidak berubah tidak dibacakan ulang, jadi menyimpan ulang episode tidak menambah biaya untuk baris yang sama.
 - Untuk wajah tokoh, pakai foto yang wajahnya berada di tengah atau agak ke atas. Aplikasi otomatis memotongnya menjadi persegi.
-- Rekaman suara dipakai sebagai suara tokoh, bukan untuk meniru suara (voice cloning).
 - Batas: audio 10 MB per file, foto 5 MB (setelah diperkecil), cerita 20.000 karakter per episode, video yang disimpan ke Drive maksimal 45 MB.
 - Semua data tersimpan di Google Drive milik akun yang men-deploy aplikasi.
 

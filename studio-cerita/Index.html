@@ -85,13 +85,15 @@
               </div>
             </form>
             <hr>
-            <h2>Suara Karakter</h2>
-            <p class="muted">Unggah rekaman sebagai referensi suara tokoh. Saat tokoh berbicara, suaranya akan diputar dan ikut terekam di video.</p>
+            <h2>Suara Pembaca</h2>
+            <p class="muted">Unggah rekaman suara yang jernih (30 detik–2 menit, satu orang berbicara). Gaya suaranya <b>ditiru</b>, lalu dipakai untuk <b>membacakan</b> narasi dan dialog sesuai teks cerita. Beri nama <b>Narator</b> untuk pembaca narasi, atau nama tokoh untuk dialog tokoh itu. Tokoh tanpa suara sendiri ikut dibacakan oleh Narator.</p>
+            <p class="muted hidden" id="clone-off">⚠ Peniruan suara belum aktif: admin perlu mengisi <code>ELEVENLABS_API_KEY</code> di Properti skrip. Sementara itu cerita dibacakan suara bawaan perangkat.</p>
             <form id="form-voice" class="stack">
-              <label>Nama karakter<input name="character" list="character-suggest" maxlength="60" required placeholder="mis. Kancil"></label>
+              <label>Suara milik<input name="character" list="character-suggest" maxlength="60" required value="Narator" placeholder="Narator atau nama tokoh, mis. Yan"></label>
               <datalist id="character-suggest"></datalist>
               <label>File audio (maks 10 MB)<input name="file" type="file" accept="audio/*" required></label>
-              <button class="btn" type="submit">Unggah suara</button>
+              <label class="check"><input type="checkbox" name="consent" required> Saya pemilik suara ini, atau sudah mendapat izin pemiliknya untuk ditiru.</label>
+              <button class="btn" type="submit">Unggah &amp; tiru suara</button>
             </form>
             <ul id="voice-list" class="list"></ul>
             <hr>
@@ -153,6 +155,7 @@
             <h2>Pratinjau</h2>
             <div class="stage-wrap"><canvas id="preview-canvas" width="960" height="540"></canvas></div>
             <div id="preview-controls" class="controls"></div>
+            <p class="muted" id="preview-voice-note">Pratinjau memakai suara perangkat. Suara tiruan dibuat otomatis saat kamu menekan <b>Simpan &amp; Tayangkan</b>.</p>
             <div id="scene-list" class="scene-list"></div>
           </div>
         </div>

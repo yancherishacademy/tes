@@ -11,7 +11,7 @@ const store = {
   set(k, v) { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch (e) { } }
 };
 
-const S = { token: store.get('sc_token'), user: null, ai: false, series: null, episode: null, editor: null, from: 'gallery', voiceCache: {}, photoCache: {}, previewStory: null, previewText: '' };
+const S = { token: store.get('sc_token'), user: null, ai: false, series: null, episode: null, editor: null, from: 'gallery', voiceCache: {}, photoCache: {}, audioCache: {}, clone: false, previewStory: null, previewText: '' };
 let previewAnim, playerAnim, loginAnim;
 
 /* ----------------------------- utilitas ----------------------------- */
@@ -79,6 +79,7 @@ function enterApp(res) {
   $('#view-login').classList.add('hidden'); $('#app').classList.remove('hidden');
   if (loginAnim) loginAnim.pause();
   api('isAIEnabled').then(v => { S.ai = !!v; $('#ai-wrap').classList.toggle('hidden', !S.ai); }).catch(() => { });
+  api('isCloneEnabled').then(v => { S.clone = !!v; $('#clone-off').classList.toggle('hidden', S.clone); }).catch(() => { });
   openGallery();
 }
 function endSession() {
@@ -181,11 +182,16 @@ async function loadVoices() {
   const ul = $('#voice-list');
   const voices = await quiet(api('listVoices', S.token, S.series.id)) || [];
   S.series.voices = voices;
-  ul.innerHTML = voices.length ? '' : '<li class="muted">Belum ada suara. Tanpa rekaman, tokoh berbicara dengan suara bawaan perangkat.</li>';
+  ul.innerHTML = voices.length ? '' : '<li class="muted">Belum ada suara. Tanpa suara tiruan, cerita dibacakan suara bawaan perangkat.</li>';
   voices.forEach(v => {
     const li = document.createElement('li');
-    li.innerHTML = `<span class="title">🎙 ${esc(v.character)} <span class="muted">— ${esc(v.fileName)}</span></span>
-      <span class="actions"><button class="btn sm" data-a="play">Dengar</button><button class="btn sm danger ghost" data-a="del">Hapus</button></span>`;
+    li.innerHTML = `<span class="title">🎙 ${esc(v.character)} <span class="muted">— ${v.cloned ? '✓ suara sudah ditiru' : 'belum ditiru'}</span></span>
+      <span class="actions">${!v.cloned && S.clone ? '<button class="btn sm primary" data-a="clone">Tiru suara</button>' : ''}<button class="btn sm" data-a="play">Dengar contoh</button><button class="btn sm danger ghost" data-a="del">Hapus</button></span>`;
+    const cb = $('[data-a=clone]', li);
+    if (cb) cb.onclick = async () => {
+      if (!confirm('Kamu pemilik suara ini, atau sudah mendapat izin pemiliknya untuk ditiru?')) return;
+      if (await quiet(run('Mempelajari gaya suara ' + v.character + '…', () => api('cloneVoice', S.token, v.id, true)))) { toast('Suara ' + v.character + ' siap membacakan cerita.'); loadVoices(); }
+    };
     $('[data-a=play]', li).onclick = async () => {
       const d = await quiet(run('Memuat suara…', () => voiceData(v.id))); if (!d) return;
       new Audio('data:' + d.mimeType + ';base64,' + d.base64).play();
@@ -201,15 +207,38 @@ $('#form-voice').addEventListener('submit', async e => {
   e.preventDefault(); const f = e.target, file = f.file.files[0];
   if (!file) return;
   if (file.size > 10 * 1024 * 1024) return toast('Ukuran audio maksimal 10 MB.');
-  const res = await quiet(run('Mengunggah suara ' + f.character.value + '…', async () =>
-    api('uploadVoice', S.token, { seriesId: S.series.id, character: f.character.value, fileName: file.name, mimeType: file.type || 'audio/mpeg', base64: await blobToBase64(file) })));
-  if (res) { toast('Suara ' + res.character + ' siap dipakai.'); f.reset(); loadVoices(); }
+  const res = await quiet(run(S.clone ? 'Mengunggah & mempelajari gaya suara ' + f.character.value + '…' : 'Mengunggah suara…', async () =>
+    api('uploadVoice', S.token, { seriesId: S.series.id, character: f.character.value, fileName: file.name, mimeType: file.type || 'audio/mpeg',
+      base64: await blobToBase64(file), clone: S.clone, consent: f.consent.checked })));
+  if (res) {
+    toast(res.cloned ? 'Suara ' + res.character + ' sudah ditiru. Simpan ulang episode agar dibacakan dengan suara ini.' : 'Suara tersimpan. Akan ditiru setelah fitur peniruan suara diaktifkan.');
+    f.reset(); loadVoices();
+  }
 });
 async function voiceData(id) {
   if (!S.voiceCache[id]) S.voiceCache[id] = await api('getVoiceData', S.token, id);
   return S.voiceCache[id];
 }
-async function voicesFor(list) { return (await Promise.all((list || []).map(v => voiceData(v.id).catch(() => null)))).filter(Boolean); }
+
+/** Bacakan semua baris episode dengan suara tiruan (dikerjakan bertahap di server). */
+async function makeVoices(episodeId) {
+  busy('Menyiapkan suara tiruan…');
+  try {
+    let r;
+    do { r = await api('generateEpisodeAudio', S.token, episodeId); busy(`Membacakan cerita dengan suara tiruan… ${r.finished}/${r.total} baris`); } while (!r.done);
+    return r;
+  } catch (e) { toast(e.message); return null; }
+  finally { busy(false); }
+}
+/** Ambil audio suara tiruan per baris lalu serahkan ke animator. */
+async function loadLineAudio(anim, story) {
+  const ids = [];
+  (story.scenes || []).forEach(sc => { if (sc.narrationAudio) ids.push(sc.narrationAudio); (sc.dialogues || []).forEach(d => d.audio && ids.push(d.audio)); });
+  const need = [...new Set(ids)].filter(id => !S.audioCache[id]);
+  for (let i = 0; i < need.length; i += 8) Object.assign(S.audioCache, await quiet(api('getAudioBatch', S.token, need.slice(i, i + 8))) || {});
+  const map = {}; ids.forEach(id => { if (S.audioCache[id]) map[id] = S.audioCache[id]; });
+  await anim.setLineAudio(map);
+}
 
 /* ----------------------------- foto referensi ----------------------------- */
 const PLACE_WORDS = ['hutan', 'pantai', 'gunung', 'kota', 'sekolah', 'desa', 'rumah', 'taman', 'angkasa', 'padang'];
@@ -334,14 +363,14 @@ async function loadPreview(story, autoplay) {
   const [voices, photos] = await Promise.all([quiet(api('listVoices', S.token, S.series.id)), quiet(api('listPhotos', S.token, S.series.id))]);
   if (voices) S.series.voices = voices;
   if (photos) S.series.photos = photos;
-  previewAnim.setVoices(await voicesFor(S.series.voices));
+  if (S.previewText === f.narration.value.trim()) await loadLineAudio(previewAnim, story);
   const photoData = await photosFor(S.series.photos);
   if ((S.series.photos || []).length > photoData.length) toast('Ada foto yang belum bisa dimuat. Coba unggah ulang.');
   await previewAnim.setPhotos(photoData);
   $('#scene-list').innerHTML = story.scenes.map((sc, i) => `<div class="scene-item" data-i="${i}"><b>Adegan ${i + 1}</b> · ${previewAnim.bgPhotoLabel(i) ? '📷 latar: ' + esc(previewAnim.bgPhotoLabel(i)) : esc(sc.setting)} · ${esc(sc.time)} · ${sc.characters.map(c => esc(c.name)).join(', ') || '—'}
     <div class="muted">${esc(sc.narration || (sc.dialogues[0] ? sc.dialogues[0].speaker + ': ' + sc.dialogues[0].text : ''))}</div></div>`).join('') || '<div class="muted">Belum ada adegan.</div>';
   $$('.scene-item').forEach(el => el.onclick = () => { previewAnim.seekScene(+el.dataset.i); previewAnim.play(); });
-  $('#character-suggest').innerHTML = story.characters.map(c => `<option value="${esc(c.name)}">`).join('');
+  $('#character-suggest').innerHTML = ['Narator'].concat(story.characters.map(c => c.name)).map(n => `<option value="${esc(n)}">`).join('');
   if (autoplay) previewAnim.play();
 }
 
@@ -363,6 +392,8 @@ $('#form-episode').addEventListener('submit', async e => {
     useAI: S.ai && f.useAI.checked, story: reuse ? S.previewStory : null
   })));
   if (!res) return;
+  const voices = await quiet(api('listVoices', S.token, S.series.id)) || S.series.voices || [];
+  if (S.clone && voices.some(v => v.cloned)) await makeVoices(res.id);
   toast('Episode tayang di Galeri. Terima kasih sudah berbagi ceritamu.');
   const mine = await quiet(api('listMySeries', S.token));
   const s = mine && mine.find(x => x.id === S.series.id); if (s) { s.voices = S.series.voices; s.photos = S.series.photos; S.series = s; }
@@ -377,7 +408,6 @@ async function openPlayer(episodeId, from) {
   if (!playerAnim) { playerAnim = new Animator($('#player-canvas')); playerControls = mountControls($('#player-controls'), playerAnim); }
   const ep = await quiet(run('Menyiapkan tayangan…', async () => {
     const ep = await api('getEpisode', S.token, episodeId);
-    ep.voiceData = await voicesFor(ep.voices);
     ep.photoData = await photosFor(ep.photos);
     return ep;
   }));
@@ -389,7 +419,7 @@ async function openPlayer(episodeId, from) {
   $('#download-status').textContent = '';
   const idx = ep.episodes.findIndex(x => x.id === ep.id);
   playerAnim.load(ep.story, { title: ep.title, seriesTitle: ep.seriesTitle, episodeLabel: 'Episode ' + ep.number, animator: ep.animator, hasNext: idx < ep.episodes.length - 1 });
-  await playerAnim.setVoices(ep.voiceData);
+  await quiet(run('Memuat suara…', () => loadLineAudio(playerAnim, ep.story)));
   await playerAnim.setPhotos(ep.photoData);
   if ((ep.photos || []).length > ep.photoData.length) toast('Ada foto yang belum bisa dimuat. Coba unggah ulang.');
   const next = ep.episodes[idx + 1];
@@ -402,6 +432,11 @@ async function openPlayer(episodeId, from) {
     const b = document.createElement('button'); b.className = 'btn sm'; b.textContent = 'Ubah episode';
     b.onclick = async () => { if (!S.series || S.series.id !== ep.seriesId) await openSeries(ep.seriesId); openEditor(ep.id); };
     own.appendChild(b);
+    if (S.clone && (ep.voices || []).some(v => v.cloned)) {
+      const v = document.createElement('button'); v.className = 'btn sm'; v.textContent = '🎙 Bacakan dengan suara tiruan';
+      v.onclick = async () => { if (await makeVoices(ep.id)) openPlayer(ep.id); };
+      own.appendChild(v);
+    }
   }
 }
 $('#btn-player-back').addEventListener('click', () => S.from === 'series' && S.series ? openSeries(S.series.id) : openGallery());
@@ -416,8 +451,10 @@ $('#btn-download').addEventListener('click', async () => {
   const ep = S.episode, status = $('#download-status'), btn = $('#btn-download');
   if (!ep) return;
   if (playerAnim.recording) { playerAnim.cancelRecording(); return; }
-  const hasTTS = !Object.keys(playerAnim.voices).length || ep.story.characters.some(c => !playerAnim.voiceFor(c.name));
-  if (hasTTS && !confirm('Video direkam sambil diputar (± ' + fmt(playerAnim.total) + ').\n\nYang ikut terekam: gambar, teks, musik, dan suara karakter yang diunggah. Suara narator bawaan perangkat tidak ikut terekam.\n\nBiarkan tab ini tetap terbuka selama perekaman. Lanjutkan?')) return;
+  const missing = playerAnim.missingAudio();
+  if (!confirm('Video direkam sambil diputar (± ' + fmt(playerAnim.total) + '). Biarkan tab ini tetap terbuka.' +
+    (missing ? '\n\n' + missing + ' baris belum punya suara tiruan, jadi baris itu akan tanpa suara di video. Unggah suara "Narator" lalu simpan ulang episode agar semua baris terbaca.' : '\n\nSemua baris dibacakan dengan suara tiruan dan ikut terekam.') +
+    '\n\nLanjutkan?')) return;
   btn.textContent = '■ Batalkan'; playerControls.setDisabled(true);
   try {
     const { blob, ext } = await playerAnim.record(p => { status.textContent = 'Merekam… ' + Math.round(p * 100) + '%'; });
